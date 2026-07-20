@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+httpx
+pytest
+numpy>=1.26,<3
+sentence-transformers>=3,<6
+networkx>=3.2,<4

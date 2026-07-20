@@ -1,0 +1,51 @@
+# Local datasets and source documents
+/*.db
+/*.db-*
+/*.sqlite
+/*.sqlite3
+/*.xlsx
+/*.xls
+/*.csv
+/*.pdf
+/*.docx
+/*.png
+/embodied_ai_jobs_database_doc.md
+*.failed
+
+# The repository contains only the sanitized demo database.
+database/*.db
+!database/demo_v4.db
+database/*.db-*
+database/*_report.json
+
+# Models, crawlers, and local working data
+/models/
+/具身智能岗位采集/
+/data/
+/tmp/
+/.agents/
+/.pnpm-store/
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.pyd
+**/.pytest_cache/
+apps/api/.venv/
+.venv/
+
+# Node / Vite / TypeScript
+**/node_modules/
+apps/web/dist/
+*.tsbuildinfo
+apps/web/vite.config.js
+apps/web/vite.config.d.ts
+
+# Environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

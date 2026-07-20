@@ -1,0 +1,602 @@
+openapi: 3.1.0
+info:
+  title: 具身智能岗位能力图谱 API
+  version: 0.1.0
+  description: 面向岗位目录、图谱查询、证据溯源、快照比较和图谱构建的首版接口契约。
+servers:
+  - url: /api/v1
+tags:
+  - name: Catalog
+  - name: Graph
+  - name: Evidence
+  - name: Admin
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      responses:
+        '200':
+          description: 服务状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  factStore: { type: string, enum: [ok, unavailable] }
+                  graphStore: { type: string, enum: [ok, stale, unavailable] }
+  /jobs:
+    get:
+      tags: [Catalog]
+      operationId: listJobs
+      parameters:
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: emerging
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: 岗位分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobPage'
+  /jobs/{jobId}:
+    get:
+      tags: [Catalog]
+      operationId: getJob
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/Snapshot'
+      responses:
+        '200':
+          description: 岗位详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /skills:
+    get:
+      tags: [Catalog]
+      operationId: listSkills
+      parameters:
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: skillType
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 技能分页结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SkillSummary' }
+                  page: { $ref: '#/components/schemas/PageMeta' }
+  /skills/{skillId}:
+    get:
+      tags: [Catalog]
+      operationId: getSkill
+      parameters:
+        - $ref: '#/components/parameters/SkillId'
+        - $ref: '#/components/parameters/Snapshot'
+      responses:
+        '200':
+          description: 技能详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /graph/snapshots:
+    get:
+      tags: [Graph]
+      operationId: listGraphSnapshots
+      responses:
+        '200':
+          description: 可用快照
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Snapshot' }
+  /graph/overview:
+    get:
+      tags: [Graph]
+      operationId: getGraphOverview
+      parameters:
+        - $ref: '#/components/parameters/Snapshot'
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: skillType
+          in: query
+          schema: { type: string }
+        - name: importance
+          in: query
+          schema: { type: string, enum: [required, preferred, optional] }
+        - name: minConfidence
+          in: query
+          schema: { type: number, minimum: 0, maximum: 1, default: 0 }
+        - name: aggregation
+          in: query
+          schema: { type: string, enum: [category, job, none], default: category }
+        - $ref: '#/components/parameters/MaxNodes'
+        - $ref: '#/components/parameters/MaxEdges'
+      responses:
+        '200':
+          description: 聚合后的全景图
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphPayload' }
+        '422': { $ref: '#/components/responses/BudgetExceeded' }
+  /graph/neighborhood:
+    get:
+      tags: [Graph]
+      operationId: getGraphNeighborhood
+      parameters:
+        - name: node
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[a-z_]+:[0-9]+$' }
+        - name: depth
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 3, default: 1 }
+        - $ref: '#/components/parameters/Snapshot'
+        - $ref: '#/components/parameters/MaxNodes'
+        - $ref: '#/components/parameters/MaxEdges'
+      responses:
+        '200':
+          description: 节点邻域
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphPayload' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BudgetExceeded' }
+  /graph/path:
+    get:
+      tags: [Graph]
+      operationId: findGraphPath
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema: { type: string }
+        - name: target
+          in: query
+          required: true
+          schema: { type: string }
+        - name: maxDepth
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 6, default: 4 }
+        - $ref: '#/components/parameters/Snapshot'
+      responses:
+        '200':
+          description: 最短解释路径
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphPayload' }
+  /graph/compare:
+    get:
+      tags: [Graph]
+      operationId: compareGraphSnapshots
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string }
+        - name: entity
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 快照差分
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphComparison' }
+  /evidence:
+    get:
+      tags: [Evidence]
+      operationId: listEvidence
+      parameters:
+        - name: mappingId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: jobId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: skillId
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: verified
+          in: query
+          schema: { type: boolean }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 证据列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Evidence' }
+                  page: { $ref: '#/components/schemas/PageMeta' }
+  /evidence/{evidenceId}:
+    get:
+      tags: [Evidence]
+      operationId: getEvidence
+      parameters:
+        - name: evidenceId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 证据详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/graph-builds:
+    post:
+      tags: [Admin]
+      operationId: createGraphBuild
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphBuildRequest'
+      responses:
+        '202':
+          description: 构建任务已接受
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphBuildRun' }
+        '409':
+          description: 相同幂等键但请求内容不一致
+  /admin/graph-builds/{runId}:
+    get:
+      tags: [Admin]
+      operationId: getGraphBuild
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 构建状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphBuildRun' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/reviews:
+    get:
+      tags: [Admin]
+      operationId: listReviewTasks
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, in_review, approved, rejected, closed] }
+        - name: taskType
+          in: query
+          schema: { type: string }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: 审核任务
+  /admin/reviews/{taskId}:
+    patch:
+      tags: [Admin]
+      operationId: updateReviewTask
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [claim, approve, reject, close] }
+                resolutionNote: { type: string, maxLength: 4000 }
+      responses:
+        '200': { description: 审核任务已更新 }
+        '409': { description: 状态冲突或任务已被领取 }
+components:
+  parameters:
+    Query:
+      name: q
+      in: query
+      schema: { type: string, maxLength: 100 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    SkillId:
+      name: skillId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Snapshot:
+      name: snapshot
+      in: query
+      schema: { type: string, default: latest-ready }
+    MaxNodes:
+      name: maxNodes
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 2000, default: 500 }
+    MaxEdges:
+      name: maxEdges
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+  responses:
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BudgetExceeded:
+      description: 图规模超过响应预算，需要增加筛选或聚合
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+    PageMeta:
+      type: object
+      required: [page, pageSize, total]
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+    JobSummary:
+      type: object
+      required: [id, key, name, categoryL1, skillCount]
+      properties:
+        id: { type: integer }
+        key: { type: string, example: 'job:24' }
+        name: { type: string }
+        code: { type: [string, 'null'] }
+        categoryL1: { type: string }
+        categoryL2: { type: [string, 'null'] }
+        emerging: { type: boolean }
+        skillCount: { type: integer }
+        evidenceCount: { type: integer }
+    JobDetail:
+      allOf:
+        - $ref: '#/components/schemas/JobSummary'
+        - type: object
+          properties:
+            responsibilities: { type: [string, 'null'] }
+            scenarios: { type: [string, 'null'] }
+            snapshot: { $ref: '#/components/schemas/SnapshotRef' }
+            skillGroups:
+              type: object
+              additionalProperties:
+                type: array
+                items: { $ref: '#/components/schemas/JobSkillRelation' }
+    JobPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/JobSummary' }
+        page: { $ref: '#/components/schemas/PageMeta' }
+    SkillSummary:
+      type: object
+      required: [id, key, name, type, jobCount]
+      properties:
+        id: { type: integer }
+        key: { type: string, example: 'skill:17' }
+        name: { type: string }
+        type: { type: string }
+        trend: { type: [string, 'null'] }
+        demandScore: { type: [number, 'null'] }
+        jobCount: { type: integer }
+        evidenceCount: { type: integer }
+    SkillDetail:
+      allOf:
+        - $ref: '#/components/schemas/SkillSummary'
+        - type: object
+          properties:
+            description: { type: [string, 'null'] }
+            relatedJobs:
+              type: array
+              items: { $ref: '#/components/schemas/JobSkillRelation' }
+    JobSkillRelation:
+      type: object
+      required: [mappingId, jobId, skillId, importance, version, evidenceCount]
+      properties:
+        mappingId: { type: integer }
+        jobId: { type: integer }
+        skillId: { type: integer }
+        importance: { type: string, enum: [required, preferred, optional] }
+        proficiency: { type: [string, 'null'] }
+        weight: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        confidence: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        version: { type: integer }
+        evidenceCount: { type: integer }
+        evidenceStatus: { type: string, enum: [verified, unverified, missing] }
+    GraphNode:
+      type: object
+      required: [key, type, label, properties]
+      properties:
+        key: { type: string }
+        type: { type: string, enum: [JobCategory, Job, SkillCategory, Skill, Company, DataSource] }
+        label: { type: string }
+        properties: { type: object, additionalProperties: true }
+        layoutHint:
+          type: object
+          additionalProperties: true
+    GraphEdge:
+      type: object
+      required: [key, type, source, target, properties]
+      properties:
+        key: { type: string }
+        type: { type: string }
+        source: { type: string }
+        target: { type: string }
+        properties: { type: object, additionalProperties: true }
+    GraphPayload:
+      type: object
+      required: [snapshot, nodes, edges, meta]
+      properties:
+        snapshot: { $ref: '#/components/schemas/SnapshotRef' }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/GraphNode' }
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/GraphEdge' }
+        meta:
+          type: object
+          required: [partial, nodeCount, edgeCount]
+          properties:
+            partial: { type: boolean }
+            stale: { type: boolean }
+            nodeCount: { type: integer }
+            edgeCount: { type: integer }
+            aggregation: { type: string }
+            warnings:
+              type: array
+              items: { type: string }
+    SnapshotRef:
+      type: object
+      required: [code, at, status]
+      properties:
+        code: { type: string }
+        at: { type: string, format: date-time }
+        status: { type: string, enum: [building, ready, failed, archived] }
+    Snapshot:
+      allOf:
+        - $ref: '#/components/schemas/SnapshotRef'
+        - type: object
+          properties:
+            name: { type: string }
+            baseline: { type: boolean }
+            metrics: { type: object, additionalProperties: true }
+    Evidence:
+      type: object
+      required: [id, mappingId, jdId, role, source, verified]
+      properties:
+        id: { type: integer }
+        mappingId: { type: integer }
+        jdId: { type: integer }
+        role: { type: string }
+        excerpt: { type: [string, 'null'] }
+        source: { type: string }
+        company: { type: [string, 'null'] }
+        fetchedAt: { type: [string, 'null'], format: date-time }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        confidence: { type: [number, 'null'] }
+        verified: { type: boolean }
+    EvidenceDetail:
+      allOf:
+        - $ref: '#/components/schemas/Evidence'
+        - type: object
+          properties:
+            rawTitle: { type: [string, 'null'] }
+            contextBefore: { type: [string, 'null'] }
+            contextAfter: { type: [string, 'null'] }
+            url: { type: [string, 'null'], format: uri }
+            extractionMethod: { type: string }
+    GraphChange:
+      type: object
+      required: [entityType, entityKey, changeType]
+      properties:
+        entityType: { type: string }
+        entityKey: { type: string }
+        changeType: { type: string, enum: [added, removed, modified, unchanged] }
+        field: { type: [string, 'null'] }
+        oldValue: {}
+        newValue: {}
+        explanation: { type: [string, 'null'] }
+        confidence: { type: [number, 'null'] }
+        evidenceCount: { type: integer }
+    GraphComparison:
+      type: object
+      required: [from, to, summary, changes]
+      properties:
+        from: { $ref: '#/components/schemas/SnapshotRef' }
+        to: { $ref: '#/components/schemas/SnapshotRef' }
+        summary:
+          type: object
+          additionalProperties: { type: integer }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/GraphChange' }
+    GraphBuildRequest:
+      type: object
+      required: [snapshot, mode, target]
+      properties:
+        snapshot: { type: string }
+        mode: { type: string, enum: [full, incremental, validate] }
+        target: { type: string, enum: [neo4j, json, graphml] }
+        dryRun: { type: boolean, default: false }
+    GraphBuildRun:
+      type: object
+      required: [id, snapshot, mode, target, status]
+      properties:
+        id: { type: integer }
+        snapshot: { type: string }
+        mode: { type: string }
+        target: { type: string }
+        status: { type: string, enum: [pending, running, succeeded, failed, cancelled] }
+        nodesWritten: { type: integer }
+        edgesWritten: { type: integer }
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
