@@ -12,12 +12,21 @@ from .vectorization import compose_embedding_text, normalize_label, text_hash
 
 
 DOMAIN_COLORS = {
-    "战略与管理": "#64748b",
-    "研究、设计与算法": "#2563eb",
-    "工程开发与实现": "#7c3aed",
-    "测试、生产与供应链": "#9333ea",
-    "商业化、服务与支持": "#ea580c",
-    "职能支撑平台": "#475569",
+    "战略与管理": "#c2706a",
+    "研究、设计与算法": "#d4925a",
+    "工程开发与实现": "#c9a94e",
+    "测试、生产与供应链": "#6a9e6e",
+    "商业化、服务与支持": "#5e88b0",
+    "职能支撑平台": "#7b6ea8",
+}
+
+CAPABILITY_L1_COLORS = {
+    "战略与经营管理能力": "#c2706a",
+    "研究、设计与算法能力": "#d4925a",
+    "工程开发与实现能力": "#c9a94e",
+    "测试、生产与供应链能力": "#6a9e6e",
+    "商业化、服务与支持能力": "#5e88b0",
+    "职能支撑能力": "#7b6ea8",
 }
 
 
@@ -70,6 +79,23 @@ class V4Repository:
                 "SELECT * FROM capability_relations WHERE review_status<>'rejected'"
             ).fetchall()
         by_id = {int(row["id"]): row for row in rows}
+        # Resolve L1 branch color for each node
+        l1_color_map: dict[int, str] = {}
+        for row in rows:
+            if int(row["level"]) == 1:
+                l1_color_map[int(row["id"])] = CAPABILITY_L1_COLORS.get(row["capability_name"], "#7b8a99")
+        branch_color: dict[int, str] = {}
+        for row in rows:
+            nid = int(row["id"])
+            if int(row["level"]) == 0:
+                branch_color[nid] = "#4b5c6e"
+            elif int(row["level"]) == 1:
+                branch_color[nid] = l1_color_map.get(nid, "#7b8a99")
+            else:
+                ancestor = nid
+                while ancestor and by_id.get(ancestor) is not None and int(by_id[ancestor]["level"]) > 1:
+                    ancestor = int(by_id[ancestor]["parent_id"]) if by_id[ancestor]["parent_id"] else None
+                branch_color[nid] = l1_color_map.get(ancestor, "#7b8a99") if ancestor else "#7b8a99"
         included: set[int]
         if root_id is None:
             included = {int(row["id"]) for row in rows if int(row["level"]) <= depth}
@@ -95,6 +121,7 @@ class V4Repository:
                     "level": int(row["level"]), "kind": row["node_kind"], "description": row["description"],
                     "aliasCount": int(row["alias_count"]), "jobCount": int(row["job_count"]),
                     "confidence": float(row["confidence"]), "reviewStatus": row["review_status"],
+                    "color": branch_color.get(node_id, "#7b8a99"),
                 },
             })
             if row["parent_id"] is not None and int(row["parent_id"]) in included:
