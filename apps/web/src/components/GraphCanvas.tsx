@@ -39,7 +39,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   const layoutKeyRef = useRef(`${props.graphKind}-${props.mode}`);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const afterLayoutOffRef = useRef<(() => void) | null>(null);
 
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
   selectedIdRef.current = props.selectedId;
@@ -50,6 +50,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     zoomIn: () => { void graphRef.current?.zoomBy(1.2); },
     zoomOut: () => { void graphRef.current?.zoomBy(0.82); },
   }), []);
+
+  // Helper: schedule fitView at multiple delays, return cleanup function
+  function scheduleFitView(graph: Graph, delays = [200, 600, 1200, 2000, 3500]): () => void {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const doFit = () => {
+      if (graphRef.current === graph) void graph.fitView({ when: "always" });
+    };
+    delays.forEach((d) => timers.push(setTimeout(doFit, d)));
+    return () => timers.forEach((t) => clearTimeout(t));
+  }
 
   // Effect 1: Create/destroy Graph instance only when layout type changes
   useEffect(() => {
@@ -220,7 +230,8 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         if (edge) callbacks.current.edge(edge);
       });
 
-      graph.on("afterlayout", () => {
+      // Listen for afterlayout to restore selection + fitView
+      afterLayoutOffRef.current = graph.on("afterlayout", () => {
         if (disposed) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
@@ -239,11 +250,17 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         }
         void graph.fitView({ when: "always" });
       });
+
+      // Extra multi-stage fitView for slow layouts (d3-force)
+      scheduleFitView(graph);
     });
 
     return () => {
       disposed = true;
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (afterLayoutOffRef.current) {
+        afterLayoutOffRef.current();
+        afterLayoutOffRef.current = null;
+      }
       window.cancelAnimationFrame(frame);
       if (activeGraph) activeGraph.destroy();
       if (graphRef.current === activeGraph) graphRef.current = null;
@@ -255,6 +272,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
+    // Skip if layout type changed — Effect 1 will handle it
+    const newLayoutKey = `${props.graphKind}-${props.mode}`;
+    if (newLayoutKey !== layoutKeyRef.current) return;
+
     const isCapability = props.graphKind === "capability";
     const isCareerCommunity = !isCapability && props.mode === "community";
 
@@ -271,12 +292,12 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     void graph.setData(data);
     void graph.render();
 
-    // Multi-stage fitView to ensure layout is stable
-    [100, 400, 800, 1500].forEach((delay) => {
-      setTimeout(() => {
-        if (graphRef.current) void graphRef.current.fitView({ when: "always" });
-      }, delay);
-    });
+    // Multi-stage fitView for data updates (especially important for d3-force)
+    const cancelTimers = scheduleFitView(graph, [200, 600, 1200, 2000, 3500]);
+
+    return () => {
+      cancelTimers();
+    };
   }, [props.payload, props.graphKind, props.mode]);
 
   // Effect 3: Handle selected state changes independently
@@ -298,4 +319,3 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   }, [props.selectedId]);
 
   return <div className="graph-canvas" ref={containerRef} aria-label={props.graphKind === "capability" ? "能力层级图谱" : "职业关联图谱"} />;
-});
