@@ -49,9 +49,3 @@ apps/web/vite.config.d.ts
 Thumbs.db
 .idea/
 .vscode/
-
-# Preview files
-.preview
-.cozeproj/reduction
-.codegraph
-.codegraph/

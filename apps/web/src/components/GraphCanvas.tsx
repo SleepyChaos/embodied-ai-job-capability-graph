@@ -31,7 +31,7 @@ function createSeededRandom(seed = 0x6d2b79f5) {
   };
 }
 
-export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: React.Ref<GraphCanvasHandle>) {
+export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const selectedIdRef = useRef(props.selectedId);
@@ -39,7 +39,7 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
   const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   const layoutKeyRef = useRef(`${props.graphKind}-${props.mode}`);
-  const afterLayoutOffRef = useRef<(() => void) | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
   selectedIdRef.current = props.selectedId;
@@ -50,16 +50,6 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
     zoomIn: () => { void graphRef.current?.zoomBy(1.2); },
     zoomOut: () => { void graphRef.current?.zoomBy(0.82); },
   }), []);
-
-  // Helper: schedule fitView at multiple delays, return cleanup function
-  function scheduleFitView(graph: Graph, delays = [200, 600, 1200, 2000, 3500]): () => void {
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const doFit = () => {
-      if (graphRef.current === graph) void graph.fitView({ when: "always" });
-    };
-    delays.forEach((d) => timers.push(setTimeout(doFit, d)));
-    return () => timers.forEach((t) => clearTimeout(t));
-  }
 
   // Effect 1: Create/destroy Graph instance only when layout type changes
   useEffect(() => {
@@ -230,37 +220,30 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
         if (edge) callbacks.current.edge(edge);
       });
 
-      // Listen for afterlayout to restore selection + fitView
-      afterLayoutOffRef.current = graph.on("afterlayout", () => {
-        if (disposed || !graphRef.current) return;
+      graph.on("afterlayout", () => {
+        if (disposed) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graphRef.current.setElementState(selectedId, "selected");
+          void graph.setElementState(selectedId, "selected");
           previousSelectedIdRef.current = selectedId;
         }
-        void graphRef.current.fitView({ when: "always" });
+        void graph.fitView({ when: "always" });
       });
 
       void graph.render().then(() => {
-        if (disposed || !graphRef.current) return;
+        if (disposed) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graphRef.current.setElementState(selectedId, "selected");
+          void graph.setElementState(selectedId, "selected");
           previousSelectedIdRef.current = selectedId;
         }
-        void graphRef.current.fitView({ when: "always" });
+        void graph.fitView({ when: "always" });
       });
-
-      // Extra multi-stage fitView for slow layouts (d3-force)
-      scheduleFitView(graph);
     });
 
     return () => {
       disposed = true;
-      if (afterLayoutOffRef.current) {
-        afterLayoutOffRef.current();
-        afterLayoutOffRef.current = null;
-      }
+      if (timerRef.current) clearTimeout(timerRef.current);
       window.cancelAnimationFrame(frame);
       if (activeGraph) activeGraph.destroy();
       if (graphRef.current === activeGraph) graphRef.current = null;
@@ -272,10 +255,6 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
-    // Skip if layout type changed — Effect 1 will handle it
-    const newLayoutKey = `${props.graphKind}-${props.mode}`;
-    if (newLayoutKey !== layoutKeyRef.current) return;
-
     const isCapability = props.graphKind === "capability";
     const isCareerCommunity = !isCapability && props.mode === "community";
 
@@ -292,12 +271,12 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
     void graph.setData(data);
     void graph.render();
 
-    // Multi-stage fitView for data updates (especially important for d3-force)
-    const cancelTimers = scheduleFitView(graph, [200, 600, 1200, 2000, 3500]);
-
-    return () => {
-      cancelTimers();
-    };
+    // Multi-stage fitView to ensure layout is stable
+    [100, 400, 800, 1500].forEach((delay) => {
+      setTimeout(() => {
+        if (graphRef.current) void graphRef.current.fitView({ when: "always" });
+      }, delay);
+    });
   }, [props.payload, props.graphKind, props.mode]);
 
   // Effect 3: Handle selected state changes independently
