@@ -16,11 +16,24 @@ type Props = {
 
 const levelColor = ["#0f2f63", "#155eef", "#6d55c4", "#c37b32"];
 
+function createSeededRandom(seed = 0x6d2b79f5) {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
 export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
+  const selectedIdRef = useRef(props.selectedId);
+  const previousSelectedIdRef = useRef<string | undefined>(undefined);
+  const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
+  selectedIdRef.current = props.selectedId;
+  visibleNodeIdsRef.current = new Set(props.payload.nodes.map((node) => node.id));
 
   useImperativeHandle(ref, () => ({
     fit: () => { void graphRef.current?.fitView({ when: "always" }); },
@@ -32,14 +45,16 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     const container = containerRef.current;
     if (!container) return;
     const isCapability = props.graphKind === "capability";
+    const isCareerCommunity = !isCapability && props.mode === "community";
+    const similarityScore = (datum: any) => Math.max(0, Math.min(1, Number(datum.data?.score ?? 0)));
     const data = {
       nodes: props.payload.nodes.map((node) => ({
         id: node.id,
-        combo: node.comboId,
+        combo: isCareerCommunity ? undefined : node.comboId,
         data: { ...node.data, graphType: node.type },
       })),
       edges: props.payload.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, data: { ...edge.data, edgeType: edge.type } })),
-      combos: props.payload.combos.map((combo) => ({ id: combo.id, combo: combo.parentId, data: combo.data })),
+      combos: isCareerCommunity ? [] : props.payload.combos.map((combo) => ({ id: combo.id, combo: combo.parentId, data: combo.data })),
     };
     let disposed = false;
     let activeGraph: Graph | null = null;
@@ -53,8 +68,30 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       padding: 44,
       layout: isCapability
         ? { type: "dagre", rankdir: "LR", nodesep: 24, ranksep: 74, controlPoints: true }
-        : props.mode === "community"
-          ? { type: "force-atlas2", preventOverlap: true, kr: 18, maxIteration: 700 }
+        : isCareerCommunity
+          ? {
+              type: "d3-force",
+              nodeStrength: -120,
+              linkDistance: (edge: any) => 170 - similarityScore(edge) * 105,
+              edgeStrength: (edge: any) => 0.15 + similarityScore(edge) * 0.7,
+              preventOverlap: true,
+              collide: {
+                radius: (node: any) => 28 + Math.min(12, Number(node.data?.capabilityCount ?? 0) / 3),
+                strength: 0.9,
+                iterations: 2,
+              },
+              clustering: true,
+              clusterBy: (node: any) => String(node.data?.categoryL1 ?? "其他"),
+              clusterNodeStrength: -5,
+              clusterEdgeStrength: 0.12,
+              clusterEdgeDistance: 160,
+              clusterNodeSize: 36,
+              clusterFociStrength: 0.16,
+              iterations: 360,
+              alphaDecay: 0.035,
+              velocityDecay: 0.35,
+              randomSource: createSeededRandom(),
+            }
           : { type: "combo-combined", preventOverlap: true, spacing: 30 },
       node: {
         type: "circle",
@@ -95,7 +132,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
           labelFontWeight: 600, radius: 12, padding: [24, 16, 16, 16],
         },
       },
-      behaviors: ["drag-canvas", "zoom-canvas", "drag-element", "click-select"],
+      behaviors: ["drag-canvas", "zoom-canvas", isCareerCommunity ? "drag-element-force" : "drag-element", "click-select"],
     });
     activeGraph = graph;
     graphRef.current = graph;
@@ -106,8 +143,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     });
     void graph.render().then(() => {
       if (disposed) return;
-      if (props.selectedId && props.payload.nodes.some((node) => node.id === props.selectedId)) {
-        void graph.setElementState(props.selectedId, "selected");
+      const selectedId = selectedIdRef.current;
+      if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
+        void graph.setElementState(selectedId, "selected");
+        previousSelectedIdRef.current = selectedId;
       }
       void graph.fitView({ when: "always" });
     });
@@ -118,7 +157,24 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       if (activeGraph) activeGraph.destroy();
       if (graphRef.current === activeGraph) graphRef.current = null;
     };
-  }, [props.graphKind, props.mode, props.payload, props.selectedId]);
+  }, [props.graphKind, props.mode, props.payload]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    const previousId = previousSelectedIdRef.current;
+    const selectedId = props.selectedId;
+    if (previousId === selectedId) return;
+    void (async () => {
+      if (previousId && visibleNodeIdsRef.current.has(previousId)) {
+        await graph.setElementState(previousId, []);
+      }
+      if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
+        await graph.setElementState(selectedId, "selected");
+      }
+      previousSelectedIdRef.current = selectedId;
+    })();
+  }, [props.selectedId]);
 
   return <div className="graph-canvas" ref={containerRef} aria-label={props.graphKind === "capability" ? "能力层级图谱" : "职业关联图谱"} />;
 });

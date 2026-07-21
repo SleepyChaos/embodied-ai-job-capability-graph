@@ -1,4 +1,4 @@
-import { Database, FlaskConical, Menu, Network, Search } from "lucide-react";
+import { Database, FlaskConical, LayoutDashboard, Menu, Network } from "lucide-react";
 import type { AppSection } from "../types";
 
 type Props = {
@@ -10,7 +10,7 @@ type Props = {
 const NAV_ITEMS = [
   { key: "graph" as const, label: "图谱探索", icon: Network },
   { key: "matcher" as const, label: "岗位匹配", icon: FlaskConical },
-  { key: "jobs" as const, label: "岗位目录", icon: Search },
+  { key: "data" as const, label: "数据总览", icon: LayoutDashboard },
   { key: "evidence" as const, label: "数据证据", icon: Database },
 ];
 

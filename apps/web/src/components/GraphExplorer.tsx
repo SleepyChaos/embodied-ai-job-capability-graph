@@ -46,23 +46,41 @@ export function GraphExplorer() {
   }, [kind, mode, selectedId]);
 
   const selected = payload?.nodes.find((node) => node.id === selectedId);
+  const selectedCapabilityId = kind === "capability" ? selectedId : undefined;
   const displayPayload = useMemo(() => {
-    if (!payload || kind !== "capability") return payload;
-    const parentByChild = new Map(payload.edges.filter((edge) => edge.type === "PARENT_OF").map((edge) => [edge.target, edge.source]));
-    let branch = selectedId;
-    while (branch && payload.nodes.find((node) => node.id === branch)?.data.level !== 1) branch = parentByChild.get(branch);
-    const visible = new Set(payload.nodes.filter((node) => Number(node.data.level) <= 1).map((node) => node.id));
-    if (branch) {
-      visible.add(branch);
-      let frontier = new Set([branch]);
-      for (let level = 0; level < 2; level += 1) {
-        const next = new Set(payload.edges.filter((edge) => edge.type === "PARENT_OF" && frontier.has(edge.source)).map((edge) => edge.target));
-        next.forEach((id) => visible.add(id));
-        frontier = next;
+    if (!payload) return payload;
+    if (kind === "capability") {
+      const parentByChild = new Map(payload.edges.filter((edge) => edge.type === "PARENT_OF").map((edge) => [edge.target, edge.source]));
+      let branch = selectedCapabilityId;
+      while (branch && payload.nodes.find((node) => node.id === branch)?.data.level !== 1) branch = parentByChild.get(branch);
+      const visible = new Set(payload.nodes.filter((node) => Number(node.data.level) <= 1).map((node) => node.id));
+      if (branch) {
+        visible.add(branch);
+        let frontier = new Set([branch]);
+        for (let level = 0; level < 2; level += 1) {
+          const next = new Set(payload.edges.filter((edge) => edge.type === "PARENT_OF" && frontier.has(edge.source)).map((edge) => edge.target));
+          next.forEach((id) => visible.add(id));
+          frontier = next;
+        }
       }
+      return { ...payload, nodes: payload.nodes.filter((node) => visible.has(node.id)), edges: payload.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target)), meta: { ...payload.meta, partial: true } };
     }
-    return { ...payload, nodes: payload.nodes.filter((node) => visible.has(node.id)), edges: payload.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target)), meta: { ...payload.meta, partial: true } };
-  }, [kind, payload, selectedId]);
+    if (mode !== "community") return payload;
+    const connected = new Set(payload.edges.flatMap((edge) => [edge.source, edge.target]));
+    const hiddenCount = payload.nodes.length - connected.size;
+    return {
+      ...payload,
+      nodes: payload.nodes.filter((node) => connected.has(node.id)),
+      combos: [],
+      meta: {
+        ...payload.meta,
+        partial: hiddenCount > 0,
+        warnings: hiddenCount > 0
+          ? [...payload.meta.warnings, `数据聚类模式隐藏了 ${hiddenCount} 个暂无相似边的职业，可在标准分类或左侧目录中查看。`]
+          : payload.meta.warnings,
+      },
+    };
+  }, [kind, mode, payload, selectedCapabilityId]);
   const filtered = useMemo(() => {
     if (!payload) return [];
     const normalized = query.trim().toLowerCase();
@@ -91,7 +109,7 @@ export function GraphExplorer() {
           <div><span>{kind === "capability" ? "有序根树" : mode === "taxonomy" ? "标准分类网络" : "相似社区网络"}</span><h2>{payload?.snapshot.name ?? "读取最新快照"}</h2></div>
           <div className="coverage-chip"><strong>{Math.round((payload?.meta.coverage ?? 0) * 100)}%</strong><span>画像覆盖率</span></div>
         </header>
-        {payload?.meta.warnings.map((warning) => <div className="data-warning" key={warning}><AlertTriangle size={15} />{warning}</div>)}
+        {displayPayload?.meta.warnings.map((warning) => <div className="data-warning" key={warning}><AlertTriangle size={15} />{warning}</div>)}
         <section className="v4-graph-stage">
           {loading ? <div className="graph-state"><LoaderCircle className="spin" />正在加载 v4 图谱</div> : error ? <div className="graph-state error"><AlertTriangle />{error}</div> : displayPayload ? <Suspense fallback={<div className="graph-state">加载 G6 渲染器</div>}><GraphCanvas ref={graphRef} payload={displayPayload} graphKind={kind} mode={mode} selectedId={selectedId} onNodeSelect={setSelectedId} onEdgeSelect={setSelectedEdge} /></Suspense> : null}
           <div className="canvas-tools"><button onClick={() => graphRef.current?.zoomIn()} aria-label="放大"><Plus size={16} /></button><button onClick={() => graphRef.current?.zoomOut()} aria-label="缩小"><Minus size={16} /></button><button onClick={() => graphRef.current?.fit()} aria-label="适配画布"><RotateCcw size={16} /></button></div>

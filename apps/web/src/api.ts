@@ -1,4 +1,4 @@
-import type { Evidence, GraphPayload, GraphPayloadV2, JobDetail, JobSummary, Page, VectorizationRun } from "./types";
+import type { DataOverviewPayload, DataTableDetail, Evidence, GraphPayload, GraphPayloadV2, JobDetail, JobSummary, Page, VectorizationRun } from "./types";
 
 const API_PREFIX = "/api/v1";
 
@@ -28,6 +28,13 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  getDataOverview(signal?: AbortSignal) {
+    return request<DataOverviewPayload>("/data-overview/tables", signal);
+  },
+  getDataTable(tableName: string, page = 1, pageSize = 25, signal?: AbortSignal) {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    return request<DataTableDetail>(`/data-overview/tables/${encodeURIComponent(tableName)}?${params}`, signal);
+  },
   listJobs(query = "", pageSize = 30, signal?: AbortSignal) {
     const params = new URLSearchParams({ q: query, pageSize: String(pageSize) });
     return request<Page<JobSummary>>(`/jobs?${params}`, signal);

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from .config import load_settings
+from .data_overview import DataOverviewRepository
 from .database import Database
 from .repository import KnowledgeGraphRepository
 from .v4_repository import V4Repository
@@ -20,6 +21,7 @@ settings = load_settings()
 database = Database(settings.database_path)
 repository = KnowledgeGraphRepository(database)
 v4_repository = V4Repository(database)
+data_overview_repository = DataOverviewRepository(database)
 
 app = FastAPI(
     title="具身智能岗位能力图谱 API",
@@ -110,6 +112,23 @@ def health():
     fact_store = database.health()
     status = "ok" if fact_store["status"] == "ok" else "degraded"
     return {"status": status, "factStore": fact_store, "graphStore": "sqlite-fallback"}
+
+
+@app.get(f"{settings.api_prefix}/data-overview/tables")
+def data_overview_tables():
+    return data_overview_repository.overview()
+
+
+@app.get(f"{settings.api_prefix}/data-overview/tables/{{table_name}}")
+def data_overview_table(
+    table_name: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, alias="pageSize", ge=1, le=100),
+):
+    try:
+        return data_overview_repository.table_detail(table_name, page, page_size)
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
 
 
 @app.get(f"{settings.api_prefix}/jobs")
