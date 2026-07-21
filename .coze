@@ -3,7 +3,7 @@ requires = ["nodejs-24"]
 
 [dev]
 build = ["pnpm", "--dir", "apps/web", "install"]
-run = ["bash", "${COZE_WORKSPACE_PATH}/start.sh"]
+run = ["sh", "-c", "bash ${COZE_WORKSPACE_PATH}/start.sh"]
 
 [deploy]
 build = ["bash", "-c", "cd apps/web && pnpm install && pnpm run build"]

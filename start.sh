@@ -9,4 +9,4 @@ EMBODIED_DB_PATH="${COZE_WORKSPACE_PATH}/data/embodied_ai_jobs_v4.db" \
 
 # Start frontend dev server
 cd "$(dirname "$0")/apps/web"
-exec pnpm dev --host 0.0.0.0 --port "${DEPLOY_RUN_PORT}"
+exec pnpm exec vite --host 0.0.0.0 --port "${DEPLOY_RUN_PORT}"
