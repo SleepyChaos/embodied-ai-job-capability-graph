@@ -39,7 +39,7 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
   const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   const layoutKeyRef = useRef(`${props.graphKind}-${props.mode}`);
-  const afterLayoutOffRef = useRef<(() => void) | null>(null);
+  const afterLayoutHandlerRef = useRef<(() => void) | null>(null);
 
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
   selectedIdRef.current = props.selectedId;
@@ -231,7 +231,7 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
       });
 
       // Listen for afterlayout to restore selection + fitView
-      afterLayoutOffRef.current = graph.on("afterlayout", () => {
+      const afterLayoutHandler = () => {
         if (disposed) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
@@ -239,7 +239,9 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
           previousSelectedIdRef.current = selectedId;
         }
         void graph.fitView({ when: "always" });
-      });
+      };
+      graph.on("afterlayout", afterLayoutHandler);
+      afterLayoutHandlerRef.current = afterLayoutHandler;
 
       void graph.render().then(() => {
         if (disposed) return;
@@ -257,9 +259,9 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
 
     return () => {
       disposed = true;
-      if (afterLayoutOffRef.current) {
-        afterLayoutOffRef.current();
-        afterLayoutOffRef.current = null;
+      if (afterLayoutHandlerRef.current) {
+        graph.off("afterlayout", afterLayoutHandlerRef.current);
+        afterLayoutHandlerRef.current = null;
       }
       window.cancelAnimationFrame(frame);
       if (activeGraph) activeGraph.destroy();
