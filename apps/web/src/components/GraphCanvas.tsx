@@ -232,23 +232,23 @@ export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: Re
 
       // Listen for afterlayout to restore selection + fitView
       afterLayoutOffRef.current = graph.on("afterlayout", () => {
-        if (disposed) return;
+        if (disposed || !graphRef.current) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graph.setElementState(selectedId, "selected");
+          void graphRef.current.setElementState(selectedId, "selected");
           previousSelectedIdRef.current = selectedId;
         }
-        void graph.fitView({ when: "always" });
+        void graphRef.current.fitView({ when: "always" });
       });
 
       void graph.render().then(() => {
-        if (disposed) return;
+        if (disposed || !graphRef.current) return;
         const selectedId = selectedIdRef.current;
         if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graph.setElementState(selectedId, "selected");
+          void graphRef.current.setElementState(selectedId, "selected");
           previousSelectedIdRef.current = selectedId;
         }
-        void graph.fitView({ when: "always" });
+        void graphRef.current.fitView({ when: "always" });
       });
 
       // Extra multi-stage fitView for slow layouts (d3-force)
