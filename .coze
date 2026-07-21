@@ -1,0 +1,10 @@
+[project]
+requires = ["nodejs-24"]
+
+[dev]
+build = ["pnpm", "--dir", "apps/web", "install"]
+run = ["bash", "${COZE_WORKSPACE_PATH}/start.sh"]
+
+[deploy]
+build = ["bash", "-c", "cd apps/web && pnpm install && pnpm run build"]
+run = ["bash", "-c", "cd apps/web && pnpm exec serve -s dist -l ${DEPLOY_RUN_PORT}"]
