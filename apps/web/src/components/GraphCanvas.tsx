@@ -39,11 +39,20 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   const layoutKeyRef = useRef(`${props.graphKind}-${props.mode}`);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
   selectedIdRef.current = props.selectedId;
   visibleNodeIdsRef.current = new Set(props.payload.nodes.map((node) => node.id));
+
+  const clearTimers = () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  };
+
+  const addTimer = (fn: () => void, delay: number) => {
+    timersRef.current.push(setTimeout(fn, delay));
+  };
 
   useImperativeHandle(ref, () => ({
     fit: () => { void graphRef.current?.fitView({ when: "always" }); },
@@ -59,16 +68,6 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
     const isCareerCommunity = !isCapability && props.mode === "community";
     const similarityScore = (datum: any) => Math.max(0, Math.min(1, Number(datum.data?.score ?? 0)));
 
-    const data = {
-      nodes: props.payload.nodes.map((node) => ({
-        id: node.id,
-        combo: isCareerCommunity ? undefined : node.comboId,
-        data: { ...node.data, graphType: node.type },
-      })),
-      edges: props.payload.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, data: { ...edge.data, edgeType: edge.type } })),
-      combos: isCareerCommunity ? [] : props.payload.combos.map((combo) => ({ id: combo.id, combo: combo.parentId, data: combo.data })),
-    };
-
     let disposed = false;
     let activeGraph: Graph | null = null;
 
@@ -80,7 +79,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       const graph = new Graph({
         container,
         autoResize: true,
-        data,
+        data: { nodes: [], edges: [], combos: [] },
         animation: false,
         padding: 44,
         layout: isCapability
@@ -219,31 +218,11 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         const edge = props.payload.edges.find((item) => item.id === String(event.target.id));
         if (edge) callbacks.current.edge(edge);
       });
-
-      graph.on("afterlayout", () => {
-        if (disposed) return;
-        const selectedId = selectedIdRef.current;
-        if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graph.setElementState(selectedId, "selected");
-          previousSelectedIdRef.current = selectedId;
-        }
-        void graph.fitView({ when: "always" });
-      });
-
-      void graph.render().then(() => {
-        if (disposed) return;
-        const selectedId = selectedIdRef.current;
-        if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
-          void graph.setElementState(selectedId, "selected");
-          previousSelectedIdRef.current = selectedId;
-        }
-        void graph.fitView({ when: "always" });
-      });
     });
 
     return () => {
       disposed = true;
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearTimers();
       window.cancelAnimationFrame(frame);
       if (activeGraph) activeGraph.destroy();
       if (graphRef.current === activeGraph) graphRef.current = null;
@@ -268,15 +247,37 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
       combos: isCareerCommunity ? [] : props.payload.combos.map((combo) => ({ id: combo.id, combo: combo.parentId, data: combo.data })),
     };
 
+    clearTimers();
+
     void graph.setData(data);
     void graph.render();
 
-    // Multi-stage fitView to ensure layout is stable
-    [100, 400, 800, 1500].forEach((delay) => {
-      setTimeout(() => {
+    // Listen for afterlayout event
+    const onAfterLayout = () => {
+      if (graphRef.current) {
+        void graphRef.current.fitView({ when: "always" });
+        // Apply selected state after layout
+        const selectedId = selectedIdRef.current;
+        if (selectedId && visibleNodeIdsRef.current.has(selectedId)) {
+          void graphRef.current.setElementState(selectedId, "selected");
+          previousSelectedIdRef.current = selectedId;
+        }
+      }
+    };
+    graph.on("afterlayout", onAfterLayout);
+
+    // Multi-stage fitView for layouts that don't emit afterlayout or take longer
+    const delays = isCapability ? [100, 400, 800] : [200, 600, 1200, 2000, 3000];
+    delays.forEach((delay) => {
+      addTimer(() => {
         if (graphRef.current) void graphRef.current.fitView({ when: "always" });
       }, delay);
     });
+
+    return () => {
+      graph.off("afterlayout", onAfterLayout);
+      clearTimers();
+    };
   }, [props.payload, props.graphKind, props.mode]);
 
   // Effect 3: Handle selected state changes independently
