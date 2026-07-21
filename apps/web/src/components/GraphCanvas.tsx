@@ -31,7 +31,7 @@ function createSeededRandom(seed = 0x6d2b79f5) {
   };
 }
 
-export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(props, ref) {
+export const GraphCanvas = forwardRef(function GraphCanvas(props: Props, ref: React.Ref<GraphCanvasHandle>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const selectedIdRef = useRef(props.selectedId);
@@ -319,3 +319,4 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   }, [props.selectedId]);
 
   return <div className="graph-canvas" ref={containerRef} aria-label={props.graphKind === "capability" ? "能力层级图谱" : "职业关联图谱"} />;
+});
