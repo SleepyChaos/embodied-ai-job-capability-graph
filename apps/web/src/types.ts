@@ -106,60 +106,8 @@ export type Page<T> = {
 
 export type ImportanceFilter = "all" | "required" | "preferred" | "optional";
 
-export type AppSection = "graph" | "matcher" | "data" | "evidence";
+export type AppSection = "graph" | "matcher" | "jobs" | "evidence";
 export type GraphKind = "capability" | "career";
-
-export type DataTableSummary = {
-  name: string;
-  displayName: string;
-  description: string;
-  group: string;
-  rowCount: number;
-  columnCount: number;
-  foreignKeyCount: number;
-};
-
-export type DataOverviewPayload = {
-  database: { fileName: string; schemaVersion: string | null; fileSizeBytes: number };
-  summary: { tableCount: number; nonEmptyTableCount: number; totalRows: number; relationshipCount: number };
-  groups: { name: string; tables: string[] }[];
-  tables: DataTableSummary[];
-};
-
-export type DataForeignKey = {
-  id: number;
-  sequence: number;
-  table: string;
-  column: string | null;
-  from: string;
-  onUpdate: string;
-  onDelete: string;
-};
-
-export type DataColumn = {
-  position: number;
-  name: string;
-  description: string;
-  declaredType: string;
-  typeCategory: "integer" | "text" | "blob" | "real" | "numeric";
-  nullable: boolean;
-  defaultValue: string | null;
-  primaryKeyPosition: number | null;
-  unique: boolean;
-  foreignKeys: DataForeignKey[];
-};
-
-export type DatabaseValue = string | number | boolean | null | { kind: "blob"; bytes: number };
-
-export type DataTableDetail = {
-  table: DataTableSummary;
-  columns: DataColumn[];
-  foreignKeys: DataForeignKey[];
-  incomingReferences: { table: string; column: string; targetColumn: string | null }[];
-  indexes: { name: string; unique: boolean; origin: string; partial: boolean; columns: string[] }[];
-  rows: Record<string, DatabaseValue>[];
-  page: { page: number; pageSize: number; total: number };
-};
 
 export type GraphNodeV2 = {
   id: string;
