@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link href="https://lf-code-agent.coze.cn/obj/x-ai-cn/fonts/google/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/jquery/jquery-3.7.1.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/lucide/lucide-1.11.0.min.js"></script>
+  <script src="https://lf-code-agent.coze.cn/obj/x-ai-cn/cdn/tailwindcss/tailwindcss-browser-4.2.4.min.js"></script>
+
+  <style type="text/tailwindcss">
+    @theme {
+      /* === 品牌色 === */
+      --color-primary:              #2F6BFF;
+      --color-primary-container:    #E8EFFF;
+      --color-on-primary:           #ffffff;
+      /* === 背景 / 表面 === */
+      --color-background:                 #F6F8FB;
+      --color-surface-container-lowest:   #FFFFFF;
+      --color-surface:                    #FFFFFF;
+      --color-surface-container:          #EDF0F5;
+      --color-surface-container-high:     #E4E8EF;
+      --color-surface-container-highest:  #DAE0E9;
+      /* === 文字 === */
+      --color-on-surface:           #152033;
+      --color-on-surface-variant:   #637089;
+      /* === 功能色 === */
+      --color-success:  #16A37B;
+      --color-error:    #ef4444;
+      --color-warning:  #f59e0b;
+      /* === 边框 === */
+      --color-outline:          #E6EAF2;
+      --color-outline-variant:  #E6EAF2;
+      /* === 圆角 === */
+      --radius-sm:   0.25rem;
+      --radius-md:   0.375rem;
+      --radius-lg:   0.5rem;
+      --radius-xl:   0.75rem;
+      --radius-2xl:  1rem;
+      --radius-full: 9999px;
+      /* === 阴影 === */
+      --shadow-card:   0 1px 3px rgba(21,32,51,0.06), 0 1px 2px rgba(21,32,51,0.04);
+      --shadow-float:  0 4px 12px rgba(21,32,51,0.08), 0 2px 4px rgba(21,32,51,0.04);
+      --shadow-dialog: 0 12px 32px rgba(21,32,51,0.12), 0 4px 8px rgba(21,32,51,0.06);
+      /* === 字体 === */
+      --font-sans: "Inter", system-ui, sans-serif;
+    }
+  </style>
+
+  <!-- 图片兜底 -->
+  <script>
+    document.addEventListener('error', function (e) {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const cat = img.getAttribute('data-category') || '其他';
+      const alt = img.getAttribute('alt') || '';
+      const label = esc(alt.length > 8 ? alt.slice(0, 8) + '…' : alt);
+      const icons = { '人物': '👤', '自然风景': '🏞', '动物': '🐾', '建筑城市': '🏙', '运动体育': '⚽', '交通工具': '🚗', '食物': '🍽', '服饰时尚': '👗', '商业科技': '💼', '游戏娱乐': '🎮', '艺术': '🎨', '其他': '🖼' };
+      const icon = icons[cat] || '🖼';
+      const w = img.width || 400, h = img.height || 300;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="%23f3f4f6"/><text x="50%" y="45%" text-anchor="middle" font-size="${Math.min(w, h) * 0.18}" dominant-baseline="central">${icon}</text><text x="50%" y="68%" text-anchor="middle" font-size="${Math.min(w, h) * 0.07}" fill="%239ca3af" font-family="system-ui,sans-serif" dominant-baseline="central">${label}</text></svg>`;
+      img.src = 'data:image/svg+xml,' + svg;
+    }, true);
+  </script>
+</head>
+
+<body class="bg-background text-on-surface font-sans">
+
+  <!-- @nav:start -->
+  <header class="bg-surface sticky top-0 z-40 h-14 flex items-center justify-between px-6 border-b border-outline-variant/20">
+    <div class="flex items-center gap-2.5">
+      <i data-lucide="network" class="text-primary w-5 h-5"></i>
+      <span class="font-semibold text-base text-on-surface">岗位智能分析图谱</span>
+    </div>
+    <nav class="flex items-center gap-1">
+      <a href="home.html" class="px-3 py-1.5 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-md transition-colors">数据总览</a>
+      <a href="import.html" class="px-3 py-1.5 text-sm font-medium text-primary bg-primary/8 rounded-md" aria-current="page">数据导入</a>
+    </nav>
+    <div class="w-20"></div>
+  </header>
+  <!-- @nav:end -->
+
+  <!-- @main-content:start -->
+  <main class="max-w-7xl mx-auto px-6 py-6">
+
+    <!-- 页面标题 -->
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <h1 class="text-2xl font-bold text-on-surface">数据导入</h1>
+        <p class="text-sm text-on-surface-variant mt-1">上传 XLSX 文件，自动解析岗位数据并抽取能力标签</p>
+      </div>
+    </div>
+
+    <!-- ====== 文件上传区域 ====== -->
+    <div id="upload-section" class="bg-surface rounded-lg shadow-card p-5 mb-8">
+      <h2 class="text-base font-semibold text-on-surface mb-4">上传文件</h2>
+
+      <!-- 拖拽上传区域 -->
+      <div id="drop-zone" class="border-2 border-dashed border-outline-variant/40 rounded-xl bg-surface-container/40 hover:bg-surface-container/70 transition-colors cursor-pointer flex flex-col items-center justify-center py-14 px-6">
+        <div class="w-14 h-14 rounded-full bg-primary/8 flex items-center justify-center mb-4">
+          <i data-lucide="upload-cloud" class="w-6 h-6 text-primary"></i>
+        </div>
+        <p class="text-sm font-medium text-on-surface mb-1">拖拽 XLSX 文件到此处，或点击选择文件</p>
+        <p class="text-xs text-on-surface-variant">仅支持 .xlsx 格式，文件大小不超过 50MB</p>
+        <input type="file" id="file-input" accept=".xlsx" class="hidden" />
+      </div>
+
+      <!-- 文件信息（选择文件后显示） -->
+      <div id="file-info" class="hidden mt-4 flex items-center justify-between bg-surface-container rounded-lg px-4 py-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-success/10 flex items-center justify-center">
+            <i data-lucide="file-spreadsheet" class="w-4.5 h-4.5 text-success"></i>
+          </div>
+          <div>
+            <p id="file-name" class="text-sm font-medium text-on-surface">具身智能岗位数据_v2.xlsx</p>
+            <p id="file-size" class="text-xs text-on-surface-variant">1.2 MB</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="btn-remove-file" class="text-on-surface-variant hover:text-error transition-colors">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-start-import" class="bg-primary text-on-primary px-5 py-2 rounded-md text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all inline-flex items-center gap-2">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i>开始导入
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== 导入结果面板 ====== -->
+    <div id="result-section" class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold text-on-surface">导入结果</h2>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-on-surface-variant">文件：具身智能岗位数据_v2.xlsx</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success">已完成</span>
+        </div>
+      </div>
+
+      <!-- 统计摘要卡片 -->
+      <div class="grid grid-cols-3 gap-4 mb-5">
+        <!-- 统计-成功 -->
+        <div class="bg-surface rounded-lg shadow-card p-5 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-full bg-success/10 flex items-center justify-center shrink-0">
+            <i data-lucide="check-circle-2" class="w-5 h-5 text-success"></i>
+          </div>
+          <div>
+            <p class="text-xs text-on-surface-variant mb-0.5">成功导入</p>
+            <p class="text-2xl font-bold text-success">42 <span class="text-sm font-normal text-on-surface-variant">条</span></p>
+          </div>
+        </div>
+        <!-- 统计-跳过 -->
+        <div class="bg-surface rounded-lg shadow-card p-5 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-full bg-warning/10 flex items-center justify-center shrink-0">
+            <i data-lucide="skip-forward" class="w-5 h-5 text-warning"></i>
+          </div>
+          <div>
+            <p class="text-xs text-on-surface-variant mb-0.5">跳过</p>
+            <p class="text-2xl font-bold text-warning">3 <span class="text-sm font-normal text-on-surface-variant">条</span></p>
+          </div>
+        </div>
+        <!-- 统计-失败 -->
+        <div class="bg-surface rounded-lg shadow-card p-5 flex items-center gap-4">
+          <div class="w-11 h-11 rounded-full bg-error/10 flex items-center justify-center shrink-0">
+            <i data-lucide="x-circle" class="w-5 h-5 text-error"></i>
+          </div>
+          <div>
+            <p class="text-xs text-on-surface-variant mb-0.5">失败</p>
+            <p class="text-2xl font-bold text-error">1 <span class="text-sm font-normal text-on-surface-variant">条</span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 导入详情表格 -->
+      <div class="bg-surface rounded-lg shadow-card overflow-hidden">
+        <div class="grid grid-cols-5 px-5 py-3 bg-surface-container text-xs font-semibold text-on-surface-variant uppercase tracking-wide">
+          <span>公司名</span>
+          <span>岗位名</span>
+          <span>状态</span>
+          <span>能力抽取数</span>
+          <span>说明</span>
+        </div>
+        <div class="divide-y divide-outline-variant/30">
+          <!-- 列表-导入详情1 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">宇树科技</span>
+            <span class="text-sm text-on-surface">具身智能算法工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">成功</span>
+            <span class="text-sm text-on-surface-variant">8 个</span>
+            <span class="text-xs text-on-surface-variant">新增 3 个能力项</span>
+          </div>
+          <!-- 列表-导入详情2 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">智元机器人</span>
+            <span class="text-sm text-on-surface">机器人控制算法专家</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">成功</span>
+            <span class="text-sm text-on-surface-variant">12 个</span>
+            <span class="text-xs text-on-surface-variant">新增 5 个能力项</span>
+          </div>
+          <!-- 列表-导入详情3 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">傅利叶智能</span>
+            <span class="text-sm text-on-surface">运动规划工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">成功</span>
+            <span class="text-sm text-on-surface-variant">6 个</span>
+            <span class="text-xs text-on-surface-variant">全部匹配已有能力</span>
+          </div>
+          <!-- 列表-导入详情4 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">达闼科技</span>
+            <span class="text-sm text-on-surface">SLAM 算法工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">跳过</span>
+            <span class="text-sm text-on-surface-variant">—</span>
+            <span class="text-xs text-on-surface-variant">重复数据，已存在</span>
+          </div>
+          <!-- 列表-导入详情5 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">银河通用</span>
+            <span class="text-sm text-on-surface">灵巧手研发工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">成功</span>
+            <span class="text-sm text-on-surface-variant">9 个</span>
+            <span class="text-xs text-on-surface-variant">新增 2 个能力项</span>
+          </div>
+          <!-- 列表-导入详情6 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">星动纪元</span>
+            <span class="text-sm text-on-surface">仿真平台开发工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">跳过</span>
+            <span class="text-sm text-on-surface-variant">—</span>
+            <span class="text-xs text-on-surface-variant">重复数据，已存在</span>
+          </div>
+          <!-- 列表-导入详情7 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">加速进化</span>
+            <span class="text-sm text-on-surface">嵌入式系统工程师</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-error/15 text-error w-fit">失败</span>
+            <span class="text-sm text-on-surface-variant">—</span>
+            <span class="text-xs text-error/80">JD 描述字段为空</span>
+          </div>
+          <!-- 列表-导入详情8 -->
+          <div class="grid grid-cols-5 px-5 py-3 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm font-medium text-on-surface">逐际动力</span>
+            <span class="text-sm text-on-surface">强化学习研究员</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">成功</span>
+            <span class="text-sm text-on-surface-variant">11 个</span>
+            <span class="text-xs text-on-surface-variant">新增 4 个能力项</span>
+          </div>
+        </div>
+        <!-- 表格底部提示 -->
+        <div class="px-5 py-3 bg-surface-container/50 flex items-center justify-between">
+          <span class="text-xs text-on-surface-variant">显示 8 / 46 条记录</span>
+          <div class="flex items-center gap-1">
+            <button id="btn-prev-page" class="px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-md transition-colors">上一页</button>
+            <button class="px-2.5 py-1 text-xs font-medium text-primary bg-primary/8 rounded-md">1</button>
+            <button class="px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-md transition-colors">2</button>
+            <button class="px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-md transition-colors">3</button>
+            <button id="btn-next-page" class="px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container rounded-md transition-colors">下一页</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== 导入历史 ====== -->
+    <div id="history-section">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold text-on-surface">导入历史</h2>
+        <span class="text-xs text-on-surface-variant">最近 4 次导入记录</span>
+      </div>
+
+      <div class="bg-surface rounded-lg shadow-card overflow-hidden">
+        <div class="grid grid-cols-5 px-5 py-3 bg-surface-container text-xs font-semibold text-on-surface-variant uppercase tracking-wide">
+          <span>导入时间</span>
+          <span>文件名</span>
+          <span>导入数量</span>
+          <span>状态</span>
+          <span>操作</span>
+        </div>
+        <div class="divide-y divide-outline-variant/30">
+          <!-- 列表-导入历史1 -->
+          <div class="grid grid-cols-5 px-5 py-3.5 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm text-on-surface-variant">2025-01-15 14:32</span>
+            <div class="flex items-center gap-2">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4 text-success/70"></i>
+              <span class="text-sm font-medium text-on-surface">具身智能岗位数据_v2.xlsx</span>
+            </div>
+            <span class="text-sm text-on-surface">46 条 <span class="text-xs text-on-surface-variant">(42 成功)</span></span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">已完成</span>
+            <button id="btn-history-detail-1" class="text-primary text-sm font-medium hover:underline w-fit">查看详情</button>
+          </div>
+          <!-- 列表-导入历史2 -->
+          <div class="grid grid-cols-5 px-5 py-3.5 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm text-on-surface-variant">2025-01-12 09:15</span>
+            <div class="flex items-center gap-2">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4 text-success/70"></i>
+              <span class="text-sm font-medium text-on-surface">具身智能岗位数据_v1.xlsx</span>
+            </div>
+            <span class="text-sm text-on-surface">38 条 <span class="text-xs text-on-surface-variant">(35 成功)</span></span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">已完成</span>
+            <button id="btn-history-detail-2" class="text-primary text-sm font-medium hover:underline w-fit">查看详情</button>
+          </div>
+          <!-- 列表-导入历史3 -->
+          <div class="grid grid-cols-5 px-5 py-3.5 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm text-on-surface-variant">2025-01-08 16:47</span>
+            <div class="flex items-center gap-2">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4 text-warning/70"></i>
+              <span class="text-sm font-medium text-on-surface">机器人方向岗位补充.xlsx</span>
+            </div>
+            <span class="text-sm text-on-surface">12 条 <span class="text-xs text-on-surface-variant">(8 成功)</span></span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/15 text-warning w-fit">部分失败</span>
+            <button id="btn-history-detail-3" class="text-primary text-sm font-medium hover:underline w-fit">查看详情</button>
+          </div>
+          <!-- 列表-导入历史4 -->
+          <div class="grid grid-cols-5 px-5 py-3.5 hover:bg-surface-container/50 transition-colors items-center">
+            <span class="text-sm text-on-surface-variant">2025-01-03 11:20</span>
+            <div class="flex items-center gap-2">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4 text-success/70"></i>
+              <span class="text-sm font-medium text-on-surface">初始岗位数据.xlsx</span>
+            </div>
+            <span class="text-sm text-on-surface">25 条 <span class="text-xs text-on-surface-variant">(25 成功)</span></span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-success/15 text-success w-fit">已完成</span>
+            <button id="btn-history-detail-4" class="text-primary text-sm font-medium hover:underline w-fit">查看详情</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+  <!-- @main-content:end -->
+
+  <script>
+    $(function () {
+
+      // ====== 文件上传交互 ======
+
+      // 点击上传区域触发文件选择
+      $('#drop-zone').on('click', function () {
+        $('#file-input').trigger('click');
+      });
+
+      // 拖拽高亮效果
+      $('#drop-zone').on('dragover', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).addClass('border-primary/50 bg-primary/5');
+      });
+
+      $('#drop-zone').on('dragleave', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).removeClass('border-primary/50 bg-primary/5');
+      });
+
+      // 拖拽放置文件
+      $('#drop-zone').on('drop', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).removeClass('border-primary/50 bg-primary/5');
+        var files = e.originalEvent.dataTransfer.files;
+        if (files.length > 0) {
+          handleFileSelect(files[0]);
+        }
+      });
+
+      // 文件选择
+      $('#file-input').on('change', function () {
+        if (this.files.length > 0) {
+          handleFileSelect(this.files[0]);
+        }
+      });
+
+      // 处理文件选择 - 显示文件信息
+      function handleFileSelect(file) {
+        var name = file.name;
+        var size = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+
+        // 校验文件类型
+        if (!name.endsWith('.xlsx')) {
+          console.log('仅支持 .xlsx 格式文件');
+          return;
+        }
+
+        $('#file-name').text(name);
+        $('#file-size').text(size);
+        $('#file-info').removeClass('hidden');
+        $('#drop-zone').addClass('hidden');
+        lucide.createIcons();
+      }
+
+      // 移除已选文件
+      $('#btn-remove-file').on('click', function () {
+        $('#file-info').addClass('hidden');
+        $('#drop-zone').removeClass('hidden');
+        $('#file-input').val('');
+      });
+
+      // 开始导入按钮
+      // 点击后应实现：
+      // 1. 按钮变为 loading 状态（显示旋转图标 + "导入中..."）
+      // 2. 调用 POST /api/v1/import/xlsx 上传文件
+      // 3. 轮询 GET /api/v1/import/status/{batch_id} 获取进度
+      // 4. 导入完成后刷新结果面板，展示新的统计数据
+      // 5. 在导入历史列表顶部插入新记录
+      $('#btn-start-import').on('click', function () {
+        console.log('开始导入 XLSX 文件，调用 POST /api/v1/import/xlsx');
+      });
+
+      // ====== 分页按钮 ======
+      $('#btn-prev-page').on('click', function () {
+        console.log('上一页');
+      });
+
+      $('#btn-next-page').on('click', function () {
+        console.log('下一页');
+      });
+
+      // ====== 导入历史详情 ======
+      $('#btn-history-detail-1').on('click', function () {
+        console.log('查看导入详情：具身智能岗位数据_v2.xlsx');
+      });
+
+      $('#btn-history-detail-2').on('click', function () {
+        console.log('查看导入详情：具身智能岗位数据_v1.xlsx');
+      });
+
+      $('#btn-history-detail-3').on('click', function () {
+        console.log('查看导入详情：机器人方向岗位补充.xlsx');
+      });
+
+      $('#btn-history-detail-4').on('click', function () {
+        console.log('查看导入详情：初始岗位数据.xlsx');
+      });
+
+    });
+  </script>
+
+  <script>lucide.createIcons();</script>
+</body>
+
+</html>
