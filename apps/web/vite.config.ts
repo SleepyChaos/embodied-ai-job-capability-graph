@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-const port = parseInt(process.env.DEPLOY_RUN_PORT || "5000", 10);
+const port = 5000;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
