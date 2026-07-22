@@ -34,12 +34,14 @@ function createSeededRandom(seed = 0x6d2b79f5) {
 export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCanvas(props, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
+  const graphReadyRef = useRef(false);
   const selectedIdRef = useRef(props.selectedId);
   const previousSelectedIdRef = useRef<string | undefined>(undefined);
   const visibleNodeIdsRef = useRef(new Set(props.payload.nodes.map((node) => node.id)));
   const callbacks = useRef({ node: props.onNodeSelect, edge: props.onEdgeSelect });
   const layoutKeyRef = useRef(`${props.graphKind}-${props.mode}`);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const pendingDataRef = useRef<typeof props.payload | null>(null);
 
   callbacks.current = { node: props.onNodeSelect, edge: props.onEdgeSelect };
   selectedIdRef.current = props.selectedId;
@@ -213,15 +215,36 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
 
       activeGraph = graph;
       graphRef.current = graph;
+      graphReadyRef.current = true;
       graph.on("node:click", (event: any) => callbacks.current.node(String(event.target.id)));
       graph.on("edge:click", (event: any) => {
         const edge = props.payload.edges.find((item) => item.id === String(event.target.id));
         if (edge) callbacks.current.edge(edge);
       });
+
+      // If there's pending data, apply it now
+      if (pendingDataRef.current) {
+        const pendingPayload = pendingDataRef.current;
+        pendingDataRef.current = null;
+        const isCapability = props.graphKind === "capability";
+        const isCareerCommunity = !isCapability && props.mode === "community";
+        const data = {
+          nodes: pendingPayload.nodes.map((node) => ({
+            id: node.id,
+            combo: isCareerCommunity ? undefined : node.comboId,
+            data: { ...node.data, graphType: node.type },
+          })),
+          edges: pendingPayload.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, data: { ...edge.data, edgeType: edge.type } })),
+          combos: isCareerCommunity ? [] : pendingPayload.combos.map((combo) => ({ id: combo.id, combo: combo.parentId, data: combo.data })),
+        };
+        void graph.setData(data);
+        void graph.render();
+      }
     });
 
     return () => {
       disposed = true;
+      graphReadyRef.current = false;
       clearTimers();
       window.cancelAnimationFrame(frame);
       if (activeGraph) activeGraph.destroy();
@@ -233,9 +256,14 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
   // Effect 2: Update data when payload changes (without destroying the Graph)
   useEffect(() => {
     const graph = graphRef.current;
-    if (!graph) return;
     const isCapability = props.graphKind === "capability";
     const isCareerCommunity = !isCapability && props.mode === "community";
+
+    // If graph is not ready yet, store pending data
+    if (!graph || !graphReadyRef.current) {
+      pendingDataRef.current = props.payload;
+      return;
+    }
 
     const data = {
       nodes: props.payload.nodes.map((node) => ({
