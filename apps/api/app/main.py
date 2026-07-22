@@ -255,10 +255,11 @@ def get_table_detail(
         # Get indexes
         indexes = []
         for idx in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
-            idx_name = idx["name"]
-            idx_unique = bool(idx["unique"])
-            idx_origin = idx.get("origin", "")
-            idx_partial = bool(idx.get("partial", 0))
+            idx_dict = dict(idx)
+            idx_name = idx_dict["name"]
+            idx_unique = bool(idx_dict["unique"])
+            idx_origin = idx_dict.get("origin", "")
+            idx_partial = bool(idx_dict.get("partial", 0))
             idx_columns = []
             for col in conn.execute(f"PRAGMA index_info({idx_name})").fetchall():
                 idx_columns.append(col["name"])
