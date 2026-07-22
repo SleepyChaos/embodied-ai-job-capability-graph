@@ -1,70 +1,75 @@
+// === App Types ===
+
+export type AppSection = "overview" | "import";
+
 // === Data Overview Types ===
+
+export type OverviewStats = {
+  totalTables: number;
+  totalRows: number;
+};
 
 export type TableSummary = {
   name: string;
-  display_name: string;
   description: string;
-  row_count: number;
-  group: string;
-  group_label: string;
+  rowCount: number;
+};
+
+export type TableGroup = {
+  key: string;
+  name: string;
+  tables: TableSummary[];
 };
 
 export type ColumnInfo = {
   name: string;
   type: string;
-  notnull: boolean;
-  pk: boolean;
-  description: string;
+  nullable: boolean;
+  primaryKey: boolean;
 };
 
 export type TableDetail = {
   name: string;
-  display_name: string;
   description: string;
-  row_count: number;
-  group: string;
-  group_label: string;
   columns: ColumnInfo[];
   data: Record<string, unknown>[];
-  page: { page: number; pageSize: number; total: number };
-};
-
-export type DatabaseStats = {
-  total_tables: number;
-  total_records: number;
-  groups: { group: string; label: string; table_count: number; record_count: number }[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
 };
 
 // === Import Types ===
 
 export type ImportResult = {
-  total_rows: number;
-  imported: number;
-  skipped: number;
-  failed: number;
-  new_capabilities_created: number;
-  new_aliases_created: number;
-  details: ImportDetail[];
+  batchId: number;
+  batchCode: string;
+  status: "completed" | "completed_with_errors" | "failed";
+  statistics: {
+    total: number;
+    success: number;
+    skipped: number;
+    failed: number;
+    capabilitiesCreated: number;
+    aliasesCreated: number;
+  };
+  errors: string[];
 };
 
-export type ImportDetail = {
-  row: number;
-  company: string;
-  position: string;
-  status: "imported" | "skipped" | "failed";
-  capabilities_extracted: number;
-  message: string;
-};
-
-export type ImportHistoryItem = {
+export type ImportBatch = {
   id: number;
-  filename: string;
-  imported_at: string;
-  total_rows: number;
-  imported: number;
-  skipped: number;
-  failed: number;
-  status: "completed" | "partial" | "failed";
+  batchCode: string;
+  sourceFilename: string;
+  status: string;
+  totalCount: number;
+  successCount: number;
+  skipCount: number;
+  failCount: number;
+  capabilitiesCreated: number;
+  aliasesCreated: number;
+  createdAt: string;
 };
 
 // === Career Types ===
@@ -73,35 +78,51 @@ export type CareerDirection = {
   id: number;
   code: string;
   name: string;
-  sort_order: number;
+  sortOrder: number;
+  subDirections: CareerSubDirection[];
 };
 
 export type CareerSubDirection = {
   id: number;
-  direction_id: number;
+  directionId: number;
   code: string;
   name: string;
-  sort_order: number;
-  direction?: CareerDirection;
+  sortOrder: number;
 };
 
 export type CareerUnit = {
   id: number;
-  sub_direction_id: number;
-  company_id: number | null;
-  position_name: string;
+  subDirectionId: number;
+  companyId: number | null;
+  jobTitle: string;
   city: string | null;
   salary: string | null;
   experience: string | null;
   education: string | null;
   url: string | null;
-  jd_description: string | null;
-  data_source: string | null;
-  source_platform: string | null;
-  collected_at: string | null;
-  sub_direction?: CareerSubDirection;
-  company?: { id: number; name: string } | null;
-  capability_count: number;
+  jdDescription: string | null;
+  dataSource: string | null;
+  sourcePlatform: string | null;
+  otherInfo: string | null;
+  semanticVector: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+  // Joined fields
+  subDirectionName?: string;
+  companyName?: string;
+};
+
+export type JobCapabilityLink = {
+  id: number;
+  careerUnitId: number;
+  capabilityAliasId: number;
+  extractionMethod: string;
+  confidence: number;
+  evidenceText: string | null;
+  createdAt: string;
+  // Joined fields
+  capabilityName?: string;
+  aliasName?: string;
 };
 
 // === Capability Types ===
@@ -110,48 +131,63 @@ export type CapabilityDirection = {
   id: number;
   code: string;
   name: string;
-  sort_order: number;
+  sortOrder: number;
+  categories: CapabilityCategory[];
 };
 
 export type CapabilityCategory = {
   id: number;
-  direction_id: number;
+  directionId: number;
   code: string;
   name: string;
-  sort_order: number;
+  sortOrder: number;
 };
 
 export type Capability = {
   id: number;
-  category_id: number;
+  categoryId: number;
+  code: string;
   name: string;
   description: string | null;
-  aliases: CapabilityAlias[];
+  sortOrder: number;
+  // Joined fields
+  categoryName?: string;
+  directionName?: string;
 };
 
 export type CapabilityAlias = {
   id: number;
-  capability_id: number;
-  alias: string;
-  alias_type: string;
+  capabilityId: number;
+  aliasName: string;
+  normalizedAlias: string;
+  aliasType: string;
+  confidence: number;
 };
 
-// === Company Types ===
+// === Enterprise Types ===
 
 export type Company = {
   id: number;
   name: string;
-  website: string | null;
-  industry: string | null;
-  description: string | null;
-  liepin_url: string | null;
+  normalizedName: string;
+  displayName: string | null;
+  liepinUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // Computed field
+  jobCount?: number;
 };
 
-// === Common Types ===
+// === Pagination ===
 
-export type Page<T> = {
+export type Pagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type PaginatedResponse<T> = {
   items: T[];
-  page: { page: number; pageSize: number; total: number };
+  pagination: Pagination;
 };
-
-export type AppSection = "overview" | "import";
