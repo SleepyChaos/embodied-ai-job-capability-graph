@@ -1,232 +1,218 @@
-import { useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Braces,
+  Columns3,
+  Database,
+  HardDrive,
+  KeyRound,
+  Link2,
+  Rows3,
+  Search,
+  Table2,
+} from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
-import { fetchOverviewStats, fetchTableGroups, fetchTableDetail } from "../api";
-import type { TableGroup, TableDetail, OverviewStats } from "../types";
+import { api } from "../api";
+import type {
+  DataColumn,
+  DataOverviewPayload,
+  DataTableDetail,
+  DataTableSummary,
+  DatabaseValue,
+} from "../types";
 
-const GROUP_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  career: { bg: "bg-primary/10", text: "text-primary", border: "border-primary/30" },
-  capability: { bg: "bg-success/10", text: "text-success", border: "border-success/30" },
-  company: { bg: "bg-warning/10", text: "text-warning", border: "border-warning/30" },
-};
+type DetailView = "schema" | "rows";
+
+const numberFormatter = new Intl.NumberFormat("zh-CN");
+
+function initialTable() {
+  return new URLSearchParams(location.search).get("table") || "job_positions";
+}
+
+function initialView(): DetailView {
+  return new URLSearchParams(location.search).get("tab") === "rows" ? "rows" : "schema";
+}
+
+function initialPage() {
+  const value = Number(new URLSearchParams(location.search).get("page") || 1);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderValue(value: DatabaseValue) {
+  if (value === null) return <span className="null-value">NULL</span>;
+  if (typeof value === "object") return <span className="blob-value">BLOB · {numberFormatter.format(value.bytes)} B</span>;
+  if (typeof value === "string" && value.length === 0) return <span className="empty-value">空字符串</span>;
+  return String(value);
+}
+
+function ColumnConstraints({ column }: { column: DataColumn }) {
+  return <div className="constraint-list">
+    {column.primaryKeyPosition ? <span className="constraint-badge primary"><KeyRound size={11} />PK{column.primaryKeyPosition > 1 ? column.primaryKeyPosition : ""}</span> : null}
+    {column.foreignKeys.length ? <span className="constraint-badge foreign"><Link2 size={11} />FK</span> : null}
+    {!column.nullable ? <span className="constraint-badge required">NOT NULL</span> : <span className="constraint-badge nullable">NULL</span>}
+    {column.unique ? <span className="constraint-badge unique">UNIQUE</span> : null}
+  </div>;
+}
+
+function SchemaView({ detail, onSelectTable }: { detail: DataTableDetail; onSelectTable: (tableName: string) => void }) {
+  return <div className="schema-view">
+    <div className="schema-table-wrap" tabIndex={0} aria-label="字段结构表格，可横向滚动查看全部属性">
+      <table className="schema-table">
+        <thead><tr><th>#</th><th>字段与中文说明</th><th>声明类型</th><th>键与约束</th><th>默认值</th><th>外键指向</th></tr></thead>
+        <tbody>{detail.columns.map((column) => <tr key={column.name}>
+          <td>{column.position + 1}</td>
+          <td><code>{column.name}</code><small>{column.description}</small></td>
+          <td><span className={`type-badge ${column.typeCategory}`}>{column.declaredType || "BLOB"}</span></td>
+          <td><ColumnConstraints column={column} /></td>
+          <td><code className="default-value">{column.defaultValue ?? "—"}</code></td>
+          <td>{column.foreignKeys.length ? column.foreignKeys.map((foreignKey) => <button className="reference-link" type="button" onClick={() => onSelectTable(foreignKey.table)} key={`${foreignKey.table}-${foreignKey.column}`}>
+            {foreignKey.table}<strong>.{foreignKey.column ?? "rowid"}</strong>
+          </button>) : <span className="muted-dash">—</span>}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    <div className="relationship-summary">
+      <div><strong>外键关系</strong><span>{detail.foreignKeys.length} 条从本表发出</span></div>
+      <div><strong>反向引用</strong><span>{detail.incomingReferences.length} 条指向本表</span></div>
+      <div><strong>索引</strong><span>{detail.indexes.length} 个已定义索引</span></div>
+    </div>
+  </div>;
+}
+
+function RowsView({ detail, onPage }: { detail: DataTableDetail; onPage: (page: number) => void }) {
+  const totalPages = Math.max(1, Math.ceil(detail.page.total / detail.page.pageSize));
+  return <div className="rows-view">
+    <div className="data-table-scroll" tabIndex={0} aria-label="数据预览表格，可横向滚动查看全部字段">
+      <table className="data-preview-table" style={{ minWidth: Math.max(900, detail.columns.length * 150) }}>
+        <thead><tr>{detail.columns.map((column) => <th key={column.name}><span>{column.name}</span><small>{column.declaredType || "BLOB"}{column.primaryKeyPosition ? " · PK" : column.foreignKeys.length ? " · FK" : ""}</small></th>)}</tr></thead>
+        <tbody>{detail.rows.map((row, rowIndex) => <tr key={`${detail.page.page}-${rowIndex}`}>
+          {detail.columns.map((column) => <td key={column.name}><code title={typeof row[column.name] === "string" ? String(row[column.name]) : undefined}>{renderValue(row[column.name])}</code></td>)}
+        </tr>)}</tbody>
+      </table>
+      {detail.rows.length === 0 ? <div className="data-empty"><Rows3 size={24} /><span>该表当前没有数据</span></div> : null}
+    </div>
+    <footer className="table-pagination">
+      <span>第 {detail.page.page} / {totalPages} 页 · 共 {numberFormatter.format(detail.page.total)} 行</span>
+      <div><button type="button" disabled={detail.page.page <= 1} onClick={() => onPage(detail.page.page - 1)} aria-label="上一页"><ArrowLeft size={15} /></button>
+      <button type="button" disabled={detail.page.page >= totalPages} onClick={() => onPage(detail.page.page + 1)} aria-label="下一页"><ArrowRight size={15} /></button></div>
+    </footer>
+  </div>;
+}
 
 export function DataOverview() {
-  const [stats, setStats] = useState<OverviewStats | null>(null);
-  const [groups, setGroups] = useState<TableGroup[]>([]);
-  const [expandedTable, setExpandedTable] = useState<string | null>(null);
-  const [tableDetail, setTableDetail] = useState<TableDetail | null>(null);
+  const [overview, setOverview] = useState<DataOverviewPayload | null>(null);
+  const [detail, setDetail] = useState<DataTableDetail | null>(null);
+  const [selectedTable, setSelectedTable] = useState(initialTable);
+  const [view, setView] = useState<DetailView>(initialView);
+  const [page, setPage] = useState(initialPage);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
   useEffect(() => {
-    Promise.all([fetchOverviewStats(), fetchTableGroups()])
-      .then(([s, g]) => {
-        setStats(s);
-        setGroups(g);
-      })
-      .catch((err) => console.error("Failed to load data:", err))
-      .finally(() => setLoading(false));
+    const controller = new AbortController();
+    api.getDataOverview(controller.signal).then((result) => {
+      setOverview(result);
+      setSelectedTable((current) => result.tables.some((table) => table.name === current)
+        ? current
+        : result.tables.find((table) => table.name === "job_positions")?.name ?? result.tables[0]?.name ?? "");
+    }).catch((reason: Error) => {
+      if (reason.name !== "AbortError") setError(reason.message);
+    });
+    return () => controller.abort();
   }, []);
 
-  const handleTableClick = async (tableName: string) => {
-    if (expandedTable === tableName) {
-      setExpandedTable(null);
-      setTableDetail(null);
-      return;
-    }
-    setExpandedTable(tableName);
-    setDetailLoading(true);
-    try {
-      const detail = await fetchTableDetail(tableName);
-      setTableDetail(detail);
-    } catch (err) {
-      console.error("Failed to load table detail:", err);
-      setTableDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
+  useEffect(() => {
+    if (!selectedTable) return undefined;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    setDetail(null);
+    api.getDataTable(selectedTable, page, 25, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setDetail(result);
+      })
+      .catch((reason: Error) => {
+        if (reason.name !== "AbortError") setError(reason.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [page, selectedTable]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    params.set("section", "data");
+    params.set("table", selectedTable);
+    params.set("tab", view);
+    if (view === "rows" && page > 1) params.set("page", String(page)); else params.delete("page");
+    history.replaceState(null, "", `${location.pathname}?${params}`);
+  }, [page, selectedTable, view]);
+
+  const tableByName = useMemo(() => new Map(overview?.tables.map((table) => [table.name, table]) ?? []), [overview]);
+  const visibleGroups = useMemo(() => (overview?.groups ?? []).map((group) => ({
+    ...group,
+    tables: group.tables.map((name) => tableByName.get(name)).filter((table): table is DataTableSummary => Boolean(table)).filter((table) => (
+      !deferredQuery || `${table.name} ${table.displayName} ${table.description}`.toLowerCase().includes(deferredQuery)
+    )),
+  })).filter((group) => group.tables.length > 0), [deferredQuery, overview, tableByName]);
+
+  const selectTable = (tableName: string) => {
+    setSelectedTable(tableName);
+    setPage(1);
   };
 
-  const toggleGroup = (groupKey: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupKey)) next.delete(groupKey);
-      else next.add(groupKey);
-      return next;
-    });
-  };
+  return <main className="data-overview-page">
+    <header className="data-overview-hero">
+      <div><h1>数据总览</h1><p>浏览 SQLite v4 的业务表、字段约束、主外键关系与只读数据样本。</p></div>
+      <div className="database-file"><HardDrive size={17} /><span><strong>{overview?.database.fileName ?? "正在连接数据库"}</strong><small>{overview ? `${formatBytes(overview.database.fileSizeBytes)} · schema ${overview.database.schemaVersion}` : "读取元数据中"}</small></span></div>
+    </header>
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-muted-foreground">加载中...</div>
-      </div>
-    );
-  }
+    <section className="database-metrics" aria-label="数据库概览指标">
+      <div><Table2 size={18} /><span><strong>{overview?.summary.tableCount ?? "—"}</strong><small>业务表</small></span></div>
+      <div><Rows3 size={18} /><span><strong>{overview ? numberFormatter.format(overview.summary.totalRows) : "—"}</strong><small>数据行</small></span></div>
+      <div><Link2 size={18} /><span><strong>{overview?.summary.relationshipCount ?? "—"}</strong><small>外键关系</small></span></div>
+      <div><Database size={18} /><span><strong>{overview?.summary.nonEmptyTableCount ?? "—"}</strong><small>非空表</small></span></div>
+    </section>
 
-  return (
-    <div className="space-y-8">
-      {/* Stats Header */}
-      <div className="flex items-center gap-6">
-        <div>
-          <h2 className="text-2xl font-semibold text-foreground">数据总览</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {stats?.totalTables ?? 0} 张表 · {stats?.totalRows ?? 0} 条记录
-          </p>
+    <div className="database-browser">
+      <aside className="table-directory">
+        <div className="directory-heading"><span>数据表目录</span><small>{overview?.tables.length ?? 0}</small></div>
+        <label className="table-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索表名或用途" /></label>
+        <div className="table-groups">
+          {visibleGroups.map((group) => <section key={group.name}><h2>{group.name}<span>{group.tables.length}</span></h2>
+            {group.tables.map((table) => <button type="button" className={selectedTable === table.name ? "active" : ""} onClick={() => selectTable(table.name)} key={table.name}>
+              <span><strong>{table.displayName}</strong><code>{table.name}</code></span><small>{numberFormatter.format(table.rowCount)}</small>
+            </button>)}
+          </section>)}
+          {visibleGroups.length === 0 ? <div className="directory-empty">没有匹配的数据表</div> : null}
         </div>
-        <div className="flex gap-3">
-          {groups.map((g) => {
-            const colors = GROUP_COLORS[g.key] ?? GROUP_COLORS.career;
-            const totalRows = g.tables.reduce((sum, t) => sum + t.rowCount, 0);
-            return (
-              <div
-                key={g.key}
-                className={`rounded-lg border px-4 py-2 ${colors.bg} ${colors.border}`}
-              >
-                <div className={`text-xs font-medium ${colors.text}`}>{g.name}</div>
-                <div className="text-lg font-semibold text-foreground">
-                  {g.tables.length} 表 / {totalRows} 条
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      </aside>
 
-      {/* Table Groups */}
-      {groups.map((group) => {
-        const colors = GROUP_COLORS[group.key] ?? GROUP_COLORS.career;
-        const isCollapsed = collapsedGroups.has(group.key);
-
-        return (
-          <section key={group.key} className="space-y-3">
-            {/* Group Header */}
-            <button
-              type="button"
-              onClick={() => toggleGroup(group.key)}
-              className="flex w-full items-center gap-2 text-left"
-            >
-              <span className={`h-4 w-1 rounded ${colors.bg}`} />
-              <h3 className="text-lg font-medium text-foreground">{group.name}</h3>
-              <span className="text-sm text-muted-foreground">
-                ({group.tables.length} 张表)
-              </span>
-              <svg
-                className={`ml-auto h-5 w-5 text-muted-foreground transition-transform ${
-                  isCollapsed ? "" : "rotate-180"
-                }`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            {/* Tables Grid */}
-            {!isCollapsed && (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {group.tables.map((table) => (
-                  <div key={table.name}>
-                    <button
-                      type="button"
-                      onClick={() => handleTableClick(table.name)}
-                      className={`w-full rounded-lg border bg-card p-4 text-left transition-all hover:shadow-md ${
-                        expandedTable === table.name
-                          ? `border-2 ${colors.border}`
-                          : "border-border"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="font-medium text-foreground">{table.name}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {table.description}
-                          </div>
-                        </div>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors.bg} ${colors.text}`}>
-                          {table.rowCount}
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* Expanded Detail */}
-                    {expandedTable === table.name && (
-                      <div className="mt-2 rounded-lg border border-border bg-card p-4">
-                        {detailLoading ? (
-                          <div className="py-4 text-center text-muted-foreground">加载中...</div>
-                        ) : tableDetail ? (
-                          <div className="space-y-4">
-                            {/* Columns */}
-                            <div>
-                              <h4 className="mb-2 text-sm font-medium text-foreground">列定义</h4>
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-border">
-                                      <th className="py-1 pr-4 text-left text-muted-foreground">列名</th>
-                                      <th className="py-1 pr-4 text-left text-muted-foreground">类型</th>
-                                      <th className="py-1 text-left text-muted-foreground">主键</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {tableDetail.columns.map((col) => (
-                                      <tr key={col.name} className="border-b border-border/50">
-                                        <td className="py-1 pr-4 font-mono text-xs">{col.name}</td>
-                                        <td className="py-1 pr-4 text-xs text-muted-foreground">{col.type}</td>
-                                        <td className="py-1 text-xs">{col.primaryKey ? "✓" : ""}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-
-                            {/* Data Preview */}
-                            {tableDetail.data.length > 0 && (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium text-foreground">
-                                  数据预览 ({tableDetail.pagination.total} 条)
-                                </h4>
-                                <div className="max-h-64 overflow-auto">
-                                  <table className="w-full text-sm">
-                                    <thead>
-                                      <tr className="border-b border-border">
-                                        {tableDetail.columns.slice(0, 5).map((col) => (
-                                          <th key={col.name} className="py-1 pr-2 text-left text-xs text-muted-foreground">
-                                            {col.name}
-                                          </th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {tableDetail.data.slice(0, 5).map((row, i) => (
-                                        <tr key={i} className="border-b border-border/50">
-                                          {tableDetail.columns.slice(0, 5).map((col) => (
-                                            <td key={col.name} className="py-1 pr-2 text-xs">
-                                              {String(row[col.name] ?? "").slice(0, 30)}
-                                            </td>
-                                          ))}
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="py-4 text-center text-muted-foreground">加载失败</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        );
-      })}
+      <section className="table-inspector">
+        {detail ? <>
+          <header className="table-titlebar">
+            <div><span>{detail.table.group}</span><h2>{detail.table.displayName}</h2><code>{detail.table.name}</code><p>{detail.table.description}</p></div>
+            <dl><div><dt>行</dt><dd>{numberFormatter.format(detail.table.rowCount)}</dd></div><div><dt>字段</dt><dd>{detail.table.columnCount}</dd></div></dl>
+          </header>
+          <nav className="table-view-tabs" aria-label="数据表视图">
+            <button type="button" className={view === "schema" ? "active" : ""} onClick={() => setView("schema")}><Columns3 size={15} />字段结构</button>
+            <button type="button" className={view === "rows" ? "active" : ""} onClick={() => setView("rows")}><Braces size={15} />数据预览</button>
+          </nav>
+          <div className={loading ? "table-content loading" : "table-content"}>
+            {view === "schema" ? <SchemaView detail={detail} onSelectTable={selectTable} /> : <RowsView detail={detail} onPage={setPage} />}
+          </div>
+        </> : <div className="table-loading"><Database size={28} /><span>{error ?? "正在读取数据表…"}</span></div>}
+        {error && detail ? <div className="table-error">{error}</div> : null}
+      </section>
     </div>
-  );
+  </main>;
 }

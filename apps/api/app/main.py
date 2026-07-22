@@ -98,49 +98,103 @@ TABLE_DESCRIPTIONS = {
 }
 
 
-@app.get(f"{settings.api_prefix}/data-overview/stats")
-def get_stats():
-    """Get overall database statistics."""
+@app.get(f"{settings.api_prefix}/data-overview")
+def get_data_overview():
+    """Get overall database overview (matches original frontend format)."""
     with database.read() as conn:
-        total_tables = 0
+        # Get database file info
+        db_path = settings.database_path
+        file_size = db_path.stat().st_size if db_path.exists() else 0
+        
+        # Get schema version
+        schema_version = None
+        try:
+            row = conn.execute("SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1").fetchone()
+            if row:
+                schema_version = str(row[0])
+        except sqlite3.OperationalError:
+            pass
+        
+        # Build tables list
+        tables = []
         total_rows = 0
-        for group_info in TABLE_GROUPS.values():
+        non_empty_count = 0
+        total_fks = 0
+        
+        for group_key, group_info in TABLE_GROUPS.items():
             for table_name in group_info["tables"]:
-                total_tables += 1
                 try:
-                    count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-                    total_rows += count
+                    row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                except sqlite3.OperationalError:
+                    row_count = 0
+                
+                # Get column count
+                col_count = 0
+                try:
+                    cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+                    col_count = len(cols)
                 except sqlite3.OperationalError:
                     pass
+                
+                # Get foreign key count
+                fk_count = 0
+                try:
+                    fks = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+                    fk_count = len(fks)
+                    total_fks += fk_count
+                except sqlite3.OperationalError:
+                    pass
+                
+                total_rows += row_count
+                if row_count > 0:
+                    non_empty_count += 1
+                
+                tables.append({
+                    "name": table_name,
+                    "displayName": TABLE_DISPLAY_NAMES.get(table_name, table_name),
+                    "description": TABLE_DESCRIPTIONS.get(table_name, ""),
+                    "group": group_info["name"],
+                    "rowCount": row_count,
+                    "columnCount": col_count,
+                    "foreignKeyCount": fk_count,
+                })
+        
+        # Build groups
+        groups = [
+            {"name": info["name"], "tables": info["tables"]}
+            for info in TABLE_GROUPS.values()
+        ]
+        
         return {
-            "totalTables": total_tables,
-            "totalRows": total_rows,
+            "database": {
+                "fileName": db_path.name,
+                "schemaVersion": schema_version,
+                "fileSizeBytes": file_size,
+            },
+            "summary": {
+                "tableCount": len(tables),
+                "nonEmptyTableCount": non_empty_count,
+                "totalRows": total_rows,
+                "relationshipCount": total_fks,
+            },
+            "groups": groups,
+            "tables": tables,
         }
 
 
-@app.get(f"{settings.api_prefix}/data-overview/tables")
-def list_tables():
-    """List all tables grouped by database part."""
-    with database.read() as conn:
-        result = []
-        for group_key, group_info in TABLE_GROUPS.items():
-            tables = []
-            for table_name in group_info["tables"]:
-                try:
-                    count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-                except sqlite3.OperationalError:
-                    count = 0
-                tables.append({
-                    "name": table_name,
-                    "description": TABLE_DESCRIPTIONS.get(table_name, ""),
-                    "rowCount": count,
-                })
-            result.append({
-                "key": group_key,
-                "name": group_info["name"],
-                "tables": tables,
-            })
-        return result
+# Display names for tables
+TABLE_DISPLAY_NAMES = {
+    "career_directions": "职业方向",
+    "career_sub_directions": "职业子方向",
+    "career_units": "职业单元",
+    "job_capability_links": "岗位能力关联",
+    "capability_directions": "能力方向",
+    "capability_categories": "能力分类",
+    "capabilities": "能力项",
+    "capability_aliases": "能力别称",
+    "companies": "企业",
+    "import_batches": "导入批次",
+}
 
 
 @app.get(f"{settings.api_prefix}/data-overview/tables/{{table_name}}")
@@ -149,7 +203,7 @@ def get_table_detail(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, alias="pageSize", ge=1, le=100),
 ):
-    """Get table schema and paginated data."""
+    """Get table schema and paginated data (matches original frontend format)."""
     with database.read() as conn:
         # Check table exists
         table_info = conn.execute(
@@ -167,6 +221,53 @@ def get_table_detail(
                 "type": row["type"],
                 "nullable": not row["notnull"],
                 "primaryKey": bool(row["pk"]),
+                "description": COLUMN_DESCRIPTIONS.get(table_name, {}).get(row["name"], ""),
+            })
+
+        # Get foreign keys
+        foreign_keys = []
+        for fk in conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall():
+            foreign_keys.append({
+                "fromColumn": fk["from"],
+                "toTable": fk["table"],
+                "toColumn": fk["to"],
+            })
+
+        # Get incoming references (tables that reference this table)
+        incoming_references = []
+        all_tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        for t in all_tables:
+            other_table = t["name"]
+            if other_table == table_name:
+                continue
+            try:
+                fks = conn.execute(f"PRAGMA foreign_key_list({other_table})").fetchall()
+                for fk in fks:
+                    if fk["table"] == table_name:
+                        incoming_references.append({
+                            "table": other_table,
+                            "column": fk["from"],
+                            "targetColumn": fk["to"],
+                        })
+            except sqlite3.OperationalError:
+                pass
+
+        # Get indexes
+        indexes = []
+        for idx in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
+            idx_name = idx["name"]
+            idx_unique = bool(idx["unique"])
+            idx_origin = idx.get("origin", "")
+            idx_partial = bool(idx.get("partial", 0))
+            idx_columns = []
+            for col in conn.execute(f"PRAGMA index_info({idx_name})").fetchall():
+                idx_columns.append(col["name"])
+            indexes.append({
+                "name": idx_name,
+                "unique": idx_unique,
+                "origin": idx_origin,
+                "partial": idx_partial,
+                "columns": idx_columns,
             })
 
         # Get row count
@@ -179,18 +280,67 @@ def get_table_detail(
             (page_size, offset)
         ).fetchall()
 
+        # Build table summary
+        col_count = len(columns)
+        fk_count = len(foreign_keys)
+        
+        # Find group
+        group_name = ""
+        for gk, gi in TABLE_GROUPS.items():
+            if table_name in gi["tables"]:
+                group_name = gi["name"]
+                break
+
         return {
-            "name": table_name,
-            "description": TABLE_DESCRIPTIONS.get(table_name, ""),
+            "table": {
+                "name": table_name,
+                "displayName": TABLE_DISPLAY_NAMES.get(table_name, table_name),
+                "description": TABLE_DESCRIPTIONS.get(table_name, ""),
+                "group": group_name,
+                "rowCount": total,
+                "columnCount": col_count,
+                "foreignKeyCount": fk_count,
+            },
             "columns": columns,
-            "data": [dict(row) for row in rows],
-            "pagination": {
+            "foreignKeys": foreign_keys,
+            "incomingReferences": incoming_references,
+            "indexes": indexes,
+            "rows": [dict(row) for row in rows],
+            "page": {
                 "page": page,
                 "pageSize": page_size,
                 "total": total,
-                "totalPages": (total + page_size - 1) // page_size if total > 0 else 0,
             },
         }
+
+
+# Column descriptions for better understanding
+COLUMN_DESCRIPTIONS = {
+    "career_units": {
+        "id": "主键",
+        "sub_direction_id": "所属子方向ID",
+        "company_id": "所属企业ID",
+        "job_title": "岗位名称",
+        "city": "工作城市",
+        "salary": "薪资范围",
+        "experience": "经验要求",
+        "education": "学历要求",
+        "jd_description": "JD描述",
+        "semantic_vector": "语义向量（用于相似度检索）",
+    },
+    "capabilities": {
+        "id": "主键",
+        "category_id": "所属分类ID",
+        "name": "能力名称",
+        "description": "能力描述",
+    },
+    "capability_aliases": {
+        "id": "主键",
+        "capability_id": "所属能力ID",
+        "alias": "别称",
+        "alias_type": "别称类型",
+    },
+}
 
 
 # ============================================================
