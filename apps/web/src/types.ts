@@ -1,6 +1,6 @@
 // === App Types ===
 
-export type AppSection = "overview" | "import";
+export type AppSection = "overview" | "import" | "capability-graph";
 
 // === Data Overview Types ===
 
@@ -162,6 +162,28 @@ export type CapabilityAlias = {
   normalizedAlias: string;
   aliasType: string;
   confidence: number;
+};
+
+export type CapabilityDetail = {
+  id: number;
+  name: string;
+  code: string;
+  description: string | null;
+  categoryId: number;
+  categoryName: string;
+  directionId: number;
+  directionName: string;
+  aliases: CapabilityAlias[];
+  jobCount: number;
+};
+
+export type CapabilityTreeNode = {
+  id: string;
+  name: string;
+  code: string;
+  level: "root" | "direction" | "category" | "capability";
+  capabilityId?: number;
+  children?: CapabilityTreeNode[];
 };
 
 // === Enterprise Types ===

@@ -381,6 +381,68 @@ def list_capabilities(
         }
 
 
+@app.get(f"{settings.api_prefix}/capabilities/graph-tree")
+def get_capability_graph_tree():
+    """Get capability tree data for G6 graph visualization."""
+    with database.read() as conn:
+        # Build tree structure: direction -> category -> capability
+        directions = conn.execute(
+            "SELECT id, code, name FROM capability_directions ORDER BY code"
+        ).fetchall()
+
+        tree = {
+            "id": "root",
+            "name": "能力图谱",
+            "children": []
+        }
+
+        for d in directions:
+            d_dict = dict(d)
+            categories = conn.execute(
+                "SELECT id, code, name FROM capability_categories WHERE direction_id = ? ORDER BY code",
+                (d_dict["id"],)
+            ).fetchall()
+
+            d_node = {
+                "id": f"dir-{d_dict['id']}",
+                "name": d_dict["name"],
+                "code": d_dict["code"],
+                "type": "direction",
+                "children": []
+            }
+
+            for c in categories:
+                c_dict = dict(c)
+                capabilities = conn.execute(
+                    "SELECT id, name, description FROM capabilities WHERE category_id = ? ORDER BY name",
+                    (c_dict["id"],)
+                ).fetchall()
+
+                c_node = {
+                    "id": f"cat-{c_dict['id']}",
+                    "name": c_dict["name"],
+                    "code": c_dict["code"],
+                    "type": "category",
+                    "children": []
+                }
+
+                for cap in capabilities:
+                    cap_dict = dict(cap)
+                    cap_node = {
+                        "id": f"cap-{cap_dict['id']}",
+                        "name": cap_dict["name"],
+                        "description": cap_dict.get("description"),
+                        "type": "capability",
+                        "capabilityId": cap_dict["id"]
+                    }
+                    c_node["children"].append(cap_node)
+
+                d_node["children"].append(c_node)
+            tree["children"].append(d_node)
+
+        return tree
+
+
 @app.get(f"{settings.api_prefix}/capabilities/{{capability_id}}")
 def get_capability(capability_id: int):
     """Get capability detail with aliases."""
