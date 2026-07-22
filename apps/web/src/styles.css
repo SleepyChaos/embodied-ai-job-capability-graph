@@ -37,3 +37,15 @@ html, body, #root { margin: 0; min-width: 320px; min-height: 100%; }
 button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid rgba(47, 107, 255, 0.3); outline-offset: 2px; }
+
+/* shadcn-style utility classes */
+@layer utilities {
+  .text-foreground { color: var(--color-on-surface); }
+  .text-muted-foreground { color: var(--color-on-surface-variant); }
+  .bg-card { background-color: var(--color-surface); }
+  .bg-background { background-color: var(--color-background); }
+  .bg-muted { background-color: var(--color-surface-container); }
+  .border-border { border-color: var(--color-outline); }
+  .border-border\/50 { border-color: color-mix(in srgb, var(--color-outline) 50%, transparent); }
+  .border-border\/30 { border-color: color-mix(in srgb, var(--color-outline) 30%, transparent); }
+}

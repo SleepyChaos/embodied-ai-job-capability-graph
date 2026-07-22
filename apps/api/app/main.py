@@ -528,6 +528,17 @@ def get_import_status(batch_id: int):
     return result
 
 
+def to_camel_case(snake_str: str) -> str:
+    """Convert snake_case to camelCase."""
+    components = snake_str.split("_")
+    return components[0] + "".join(x.title() for x in components[1:])
+
+
+def dict_to_camel(d: dict) -> dict:
+    """Convert dict keys from snake_case to camelCase."""
+    return {to_camel_case(k): v for k, v in d.items()}
+
+
 @app.get(f"{settings.api_prefix}/import/history")
 @app.get(f"{settings.api_prefix}/import/batches")
 def list_import_batches(
@@ -544,8 +555,16 @@ def list_import_batches(
             LIMIT ? OFFSET ?
         """, (page_size, offset)).fetchall()
 
+        items = []
+        for r in rows:
+            item = dict_to_camel(dict(r))
+            # Map source_file to sourceFilename
+            if "sourceFile" in item:
+                item["sourceFilename"] = item.pop("sourceFile")
+            items.append(item)
+
         return {
-            "items": [dict(r) for r in rows],
+            "items": items,
             "pagination": {
                 "page": page,
                 "pageSize": page_size,
