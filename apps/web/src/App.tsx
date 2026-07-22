@@ -1,49 +1,53 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { api } from "./api";
-import { AppHeader } from "./components/AppHeader";
-import { EvidenceCatalog, JobCatalog } from "./components/CatalogPages";
-import { GraphExplorer } from "./components/GraphExplorer";
-import { MatcherLab } from "./components/MatcherLab";
-import type { AppSection, Evidence, JobDetail, JobSummary } from "./types";
-
-function initialSection(): AppSection {
-  const value = new URLSearchParams(location.search).get("section");
-  return value === "matcher" || value === "jobs" || value === "evidence" ? value : "graph";
-}
+import { DataOverview } from "./components/DataOverview";
+import { DataImport } from "./components/DataImport";
+import type { AppSection } from "./types";
 
 export default function App() {
-  const [section, setSection] = useState<AppSection>(initialSection);
-  const [jobs, setJobs] = useState<JobSummary[]>([]);
-  const [job, setJob] = useState<JobDetail | null>(null);
-  const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [section, setSection] = useState<AppSection>("overview");
 
-  useEffect(() => {
-    const controller = new AbortController();
-    api.listJobs("", 100, controller.signal).then((result) => setJobs(result.items)).catch(() => setJobs([]));
-    return () => controller.abort();
-  }, []);
+  return (
+    <div className="min-h-screen bg-background text-on-surface">
+      {/* Header */}
+      <header className="border-b border-outline-variant bg-surface">
+        <div className="mx-auto max-w-7xl px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-on-surface">岗位智能分析图谱</h1>
+              <p className="mt-1 text-sm text-on-surface-variant">数据管理平台</p>
+            </div>
+            <nav className="flex gap-1">
+              <button
+                onClick={() => setSection("overview")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  section === "overview"
+                    ? "bg-primary text-on-primary"
+                    : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
+                }`}
+              >
+                数据总览
+              </button>
+              <button
+                onClick={() => setSection("import")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  section === "import"
+                    ? "bg-primary text-on-primary"
+                    : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
+                }`}
+              >
+                数据导入
+              </button>
+            </nav>
+          </div>
+        </div>
+      </header>
 
-  const selectJob = (item: JobSummary) => {
-    const controller = new AbortController();
-    api.getJob(item.id, controller.signal).then(setJob).catch(() => setJob(null));
-    api.listEvidence({ jobId: item.id }, controller.signal).then((result) => setEvidence(result.items)).catch(() => setEvidence([]));
-  };
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    params.set("section", section);
-    params.delete("view");
-    if (section !== "graph") for (const key of ["graph", "node", "job", "mode", "topK", "threshold"]) params.delete(key);
-    if (section !== "matcher") params.delete("run");
-    history.replaceState(null, "", `${location.pathname}?${params}`);
-  }, [section]);
-
-  return <div className="app-shell">
-    <AppHeader activeSection={section} onNavigate={setSection} onOpenFilters={() => undefined} />
-    {section === "graph" ? <GraphExplorer /> : null}
-    {section === "matcher" ? <MatcherLab /> : null}
-    {section === "jobs" ? <JobCatalog jobs={jobs} onOpenJob={(item) => { selectJob(item); history.replaceState(null, "", `?section=graph&graph=career&job=${item.id}`); setSection("graph"); }} /> : null}
-    {section === "evidence" ? <EvidenceCatalog jobs={jobs} selectedJobId={job?.id} evidence={evidence} onSelectJob={selectJob} /> : null}
-  </div>;
+      {/* Main Content */}
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        {section === "overview" && <DataOverview />}
+        {section === "import" && <DataImport />}
+      </main>
+    </div>
+  );
 }

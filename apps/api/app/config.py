@@ -18,7 +18,7 @@ class Settings:
 def load_settings() -> Settings:
     project_root = Path(__file__).resolve().parents[3]
     configured = os.getenv("EMBODIED_DB_PATH")
-    database_path = Path(configured).resolve() if configured else project_root / "embodied_ai_jobs_v4.db"
+    database_path = Path(configured).resolve() if configured else project_root / "data" / "embodied_ai_jobs_v4.db"
     model_dir_value = os.getenv("EMBODIED_MODEL_DIR")
     return Settings(
         database_path=database_path,

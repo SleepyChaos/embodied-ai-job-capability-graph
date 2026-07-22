@@ -1,193 +1,157 @@
-export type ViewMode = "job" | "overview";
+// === Data Overview Types ===
 
-export type GraphNode = {
-  key: string;
-  type: "JobCategory" | "Job" | "SkillCategory" | "Skill" | "Company" | "DataSource";
-  label: string;
-  properties: Record<string, unknown>;
+export type TableSummary = {
+  name: string;
+  display_name: string;
+  description: string;
+  row_count: number;
+  group: string;
+  group_label: string;
 };
 
-export type GraphEdge = {
-  key: string;
+export type ColumnInfo = {
+  name: string;
   type: string;
-  source: string;
-  target: string;
-  properties: Record<string, unknown>;
+  notnull: boolean;
+  pk: boolean;
+  description: string;
 };
 
-export type Snapshot = {
+export type TableDetail = {
+  name: string;
+  display_name: string;
+  description: string;
+  row_count: number;
+  group: string;
+  group_label: string;
+  columns: ColumnInfo[];
+  data: Record<string, unknown>[];
+  page: { page: number; pageSize: number; total: number };
+};
+
+export type DatabaseStats = {
+  total_tables: number;
+  total_records: number;
+  groups: { group: string; label: string; table_count: number; record_count: number }[];
+};
+
+// === Import Types ===
+
+export type ImportResult = {
+  total_rows: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  new_capabilities_created: number;
+  new_aliases_created: number;
+  details: ImportDetail[];
+};
+
+export type ImportDetail = {
+  row: number;
+  company: string;
+  position: string;
+  status: "imported" | "skipped" | "failed";
+  capabilities_extracted: number;
+  message: string;
+};
+
+export type ImportHistoryItem = {
+  id: number;
+  filename: string;
+  imported_at: string;
+  total_rows: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  status: "completed" | "partial" | "failed";
+};
+
+// === Career Types ===
+
+export type CareerDirection = {
+  id: number;
   code: string;
   name: string;
-  at: string;
-  status: string;
-  baseline: boolean;
-  metrics: Record<string, number>;
+  sort_order: number;
 };
 
-export type GraphPayload = {
-  snapshot: Snapshot;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  meta: {
-    partial: boolean;
-    stale: boolean;
-    nodeCount: number;
-    edgeCount: number;
-    totalNodeCount?: number;
-    totalEdgeCount?: number;
-    root?: string;
-    aggregation: string;
-    warnings: string[];
-  };
-};
-
-export type JobSummary = {
+export type CareerSubDirection = {
   id: number;
-  key: string;
+  direction_id: number;
+  code: string;
   name: string;
-  code: string | null;
-  categoryL1: string;
-  categoryL2: string | null;
-  emerging: boolean;
-  skillCount: number;
-  evidenceCount: number;
+  sort_order: number;
+  direction?: CareerDirection;
 };
 
-export type JobSkillRelation = {
-  mappingId: number;
-  jobId: number;
-  skillId: number;
-  skillKey: string;
-  skillName: string;
-  skillType: string;
-  importance: "required" | "preferred" | "optional";
-  proficiency: string | null;
-  weight: number | null;
-  confidence: number | null;
-  version: number;
-  evidenceCount: number;
-  evidenceStatus: "verified" | "unverified" | "missing";
-};
-
-export type JobDetail = JobSummary & {
-  nameEn: string | null;
-  responsibilities: string | null;
-  scenarios: string | null;
-  jdCount: number;
-  snapshot: Snapshot;
-  skillGroups: Record<string, JobSkillRelation[]>;
-};
-
-export type Evidence = {
+export type CareerUnit = {
   id: number;
-  mappingId: number;
-  jobId: number;
-  jobName: string;
-  skillId: number;
-  skillName: string;
-  jdId: number;
-  role: string;
-  excerpt: string | null;
-  source: string;
-  company: string | null;
-  rawTitle: string | null;
+  sub_direction_id: number;
+  company_id: number | null;
+  position_name: string;
+  city: string | null;
+  salary: string | null;
+  experience: string | null;
+  education: string | null;
   url: string | null;
-  fetchedAt: string | null;
-  publishedAt: string | null;
-  confidence: number | null;
-  verified: boolean;
-  extractionMethod: string;
+  jd_description: string | null;
+  data_source: string | null;
+  source_platform: string | null;
+  collected_at: string | null;
+  sub_direction?: CareerSubDirection;
+  company?: { id: number; name: string } | null;
+  capability_count: number;
 };
+
+// === Capability Types ===
+
+export type CapabilityDirection = {
+  id: number;
+  code: string;
+  name: string;
+  sort_order: number;
+};
+
+export type CapabilityCategory = {
+  id: number;
+  direction_id: number;
+  code: string;
+  name: string;
+  sort_order: number;
+};
+
+export type Capability = {
+  id: number;
+  category_id: number;
+  name: string;
+  description: string | null;
+  aliases: CapabilityAlias[];
+};
+
+export type CapabilityAlias = {
+  id: number;
+  capability_id: number;
+  alias: string;
+  alias_type: string;
+};
+
+// === Company Types ===
+
+export type Company = {
+  id: number;
+  name: string;
+  website: string | null;
+  industry: string | null;
+  description: string | null;
+  liepin_url: string | null;
+};
+
+// === Common Types ===
 
 export type Page<T> = {
   items: T[];
   page: { page: number; pageSize: number; total: number };
 };
 
-export type ImportanceFilter = "all" | "required" | "preferred" | "optional";
-
-export type AppSection = "graph" | "matcher" | "jobs" | "evidence";
-export type GraphKind = "capability" | "career";
-
-export type GraphNodeV2 = {
-  id: string;
-  type: "capability" | "career";
-  comboId?: string;
-  data: {
-    databaseId: number;
-    label: string;
-    level?: number;
-    kind?: string;
-    categoryL1?: string;
-    categoryL2?: string;
-    capabilityCount?: number;
-    jdCount?: number;
-    jobCount?: number;
-    aliasCount?: number;
-    color?: string;
-    [key: string]: unknown;
-  };
-};
-
-export type GraphEdgeV2 = {
-  id: string;
-  source: string;
-  target: string;
-  type: string;
-  data: { score?: number; weight?: number; [key: string]: unknown };
-};
-
-export type GraphComboV2 = {
-  id: string;
-  type: "domain" | "category";
-  parentId?: string;
-  data: { label: string; color?: string };
-};
-
-export type GraphPayloadV2 = {
-  schemaVersion: "2";
-  graphType: GraphKind;
-  snapshot: Snapshot & { id: number };
-  nodes: GraphNodeV2[];
-  edges: GraphEdgeV2[];
-  combos: GraphComboV2[];
-  meta: { partial: boolean; stale: boolean; coverage: number; warnings: string[] };
-};
-
-export type MatchCandidate = {
-  id: number;
-  rank: number;
-  jobId: number;
-  jobName: string;
-  categoryL1: string;
-  categoryL2: string;
-  suggestion: string;
-  score: number;
-  coverage: number;
-  components: Record<string, number | null>;
-  explanation: {
-    sharedCapabilities?: string[];
-    missingCapabilities?: string[];
-    newCapabilities?: string[];
-  };
-};
-
-export type VectorizationRun = {
-  id: number;
-  source: string;
-  status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
-  progress: number;
-  semanticAvailable: boolean;
-  capabilityCount: number;
-  candidateCount: number;
-  model: { code: string; name: string; revision: string; dimensions: number };
-  warnings: string[];
-  error: string | null;
-  resultSummary: {
-    domainVector: { id: number; name: string; weight: number }[];
-    topCapabilities: { id: number; name: string; weight: number }[];
-    evidenceCount: number;
-  } | null;
-  candidates: MatchCandidate[];
-  decision: Record<string, unknown> | null;
-};
+export type AppSection = "overview" | "import";
