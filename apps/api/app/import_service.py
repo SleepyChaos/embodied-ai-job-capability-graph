@@ -111,26 +111,120 @@ class CapabilityExtractor:
         end = min(len(text), idx + len(term) + context_len)
         return text[start:end].strip()
 
-    def _extract_potential_capabilities(self, text: str) -> list[ExtractedCapability]:
-        """Extract potential new capabilities using pattern matching."""
-        results: list[ExtractedCapability] = []
+    # Common English words to filter out (not technical skills)
+    STOP_WORDS = {
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+        'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
+        'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you',
+        'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself',
+        'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them',
+        'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this',
+        'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been',
+        'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing',
+        'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through',
+        'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down',
+        'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then',
+        'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+        'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
+        'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+        'just', 'because', 'but', 'and', 'or', 'if', 'while', 'although',
+        'as', 'of', 'to', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
+        'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+        # Common non-skill terms in JDs
+        'snapshot', 'role', 'area', 'team', 'company', 'position', 'job',
+        'work', 'working', 'candidate', 'applicant', 'application', 'resume',
+        'salary', 'benefits', 'location', 'office', 'remote', 'hybrid',
+        'full-time', 'part-time', 'contract', 'permanent', 'temporary',
+        'responsibilities', 'requirements', 'qualifications', 'experience',
+        'education', 'degree', 'bachelor', 'master', 'phd', 'years',
+        'equal', 'opportunity', 'employer', 'diversity', 'inclusion',
+        'google', 'deepmind', 'microsoft', 'amazon', 'apple', 'meta',
+        'january', 'february', 'march', 'april', 'may', 'june', 'july',
+        'august', 'september', 'october', 'november', 'december',
+        'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    }
 
-        # English technical terms (capitalized words, acronyms)
-        en_patterns = [
-            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',  # CamelCase or multi-word
-            r'\b([A-Z]{2,}[0-9]*)\b',  # Acronyms like ROS, SLAM, AI
-        ]
-        for pattern in en_patterns:
-            for match in re.finditer(pattern, text):
-                term = match.group(1)
-                normalized = normalize_label(term)
-                if normalized and len(normalized) >= 2 and normalized not in self.aliases:
+    def _extract_potential_capabilities(self, text: str) -> list[ExtractedCapability]:
+        """Extract potential new capabilities using pattern matching.
+        
+        Only extracts high-confidence terms:
+        - Acronyms (ROS, SLAM, AI, etc.)
+        - Known technical keywords
+        """
+        results: list[ExtractedCapability] = []
+        seen: set[str] = set()
+
+        # Known technical keywords (case-insensitive matching)
+        TECH_KEYWORDS = {
+            # Programming languages
+            'python', 'c++', 'java', 'javascript', 'typescript', 'go', 'rust', 'scala',
+            'kotlin', 'swift', 'ruby', 'php', 'matlab', 'r', 'julia', 'lua',
+            # Frameworks & libraries
+            'pytorch', 'tensorflow', 'jax', 'keras', 'scikit-learn', 'pandas', 'numpy',
+            'opencv', 'ros', 'ros2', 'gazebo', 'mujoco', 'isaac', 'isaac sim',
+            'unity', 'unreal', 'unreal engine', 'three.js', 'webgl', 'vulkan',
+            # AI/ML concepts
+            'machine learning', 'deep learning', 'reinforcement learning', 'imitation learning',
+            'computer vision', 'natural language processing', 'nlp', 'llm', 'large language model',
+            'transformer', 'cnn', 'rnn', 'lstm', 'gan', 'vae', 'diffusion',
+            'object detection', 'semantic segmentation', 'pose estimation', 'slam',
+            'path planning', 'motion planning', 'trajectory optimization', 'pid control',
+            'model predictive control', 'mpc', 'kalman filter', 'particle filter',
+            # Robotics specific
+            'inverse kinematics', 'forward kinematics', 'dynamics', 'kinematics',
+            'grasping', 'manipulation', 'locomotion', 'navigation', 'mapping',
+            'sensor fusion', 'lidar', 'radar', 'imu', 'gps', 'rtk',
+            'embedded', 'firmware', 'rtos', 'freertos', 'zynq', 'fpga',
+            'can bus', 'ethercat', 'modbus', 'spi', 'i2c', 'uart',
+            # Hardware & design
+            'cad', 'solidworks', 'catia', 'autocad', 'pcb', 'schematic',
+            'finite element', 'fea', 'cfd', 'thermal analysis',
+            # DevOps & tools
+            'docker', 'kubernetes', 'k8s', 'ci/cd', 'jenkins', 'gitlab',
+            'aws', 'azure', 'gcp', 'linux', 'ubuntu', 'bash', 'shell',
+            'git', 'jira', 'confluence', 'agile', 'scrum',
+            # Chinese technical terms
+            '机器学习', '深度学习', '强化学习', '模仿学习', '计算机视觉', '自然语言处理',
+            '大模型', '大语言模型', '多模态', '点云', '语义分割', '目标检测',
+            '运动规划', '路径规划', '轨迹优化', '逆运动学', '正运动学', '动力学',
+            '传感器融合', '激光雷达', '毫米波雷达', '惯性导航', '视觉slam',
+            '嵌入式', '固件', '上位机', '下位机', '实时系统', 'rtos',
+            '机械设计', '结构设计', '电路设计', 'pcb设计', '仿真分析',
+            '有限元', '热分析', '流体力学', '材料科学', '复合材料',
+        }
+
+        text_lower = text.lower()
+        for keyword in TECH_KEYWORDS:
+            if keyword in text_lower:
+                normalized = normalize_label(keyword)
+                if normalized and normalized not in self.aliases and normalized not in seen:
+                    seen.add(normalized)
+                    # Find the original case version in text
+                    idx = text_lower.find(keyword)
+                    original = text[idx:idx + len(keyword)]
                     results.append(ExtractedCapability(
-                        name=term,
+                        name=original,
                         normalized=normalized,
-                        evidence_text=self._extract_context(text, term),
-                        confidence=0.7,
+                        evidence_text=self._extract_context(text, original),
+                        confidence=0.9,
                     ))
+
+        # Acronyms (2-6 uppercase letters, optionally with numbers)
+        for match in re.finditer(r'\b([A-Z]{2,6}[0-9]?)\b', text):
+            term = match.group(1)
+            normalized = normalize_label(term)
+            if (normalized and len(normalized) >= 2 and
+                normalized not in self.aliases and
+                normalized not in self.STOP_WORDS and
+                normalized not in seen):
+                seen.add(normalized)
+                results.append(ExtractedCapability(
+                    name=term,
+                    normalized=normalized,
+                    evidence_text=self._extract_context(text, term),
+                    confidence=0.7,
+                ))
 
         return results
 

@@ -109,7 +109,7 @@ CREATE INDEX idx_career_sub_directions_direction ON career_sub_directions(direct
 -- Career units (= JD entries from XLSX)
 CREATE TABLE career_units (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    sub_direction_id        INTEGER NOT NULL REFERENCES career_sub_directions(id),
+    sub_direction_id        INTEGER REFERENCES career_sub_directions(id),
     company_id              INTEGER REFERENCES companies(id),
     job_title               TEXT NOT NULL,
     city                    TEXT,

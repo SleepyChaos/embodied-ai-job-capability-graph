@@ -98,6 +98,26 @@ TABLE_DESCRIPTIONS = {
 }
 
 
+@app.get(f"{settings.api_prefix}/data-overview/stats")
+def get_stats():
+    """Get overall database statistics."""
+    with database.read() as conn:
+        total_tables = 0
+        total_rows = 0
+        for group_info in TABLE_GROUPS.values():
+            for table_name in group_info["tables"]:
+                total_tables += 1
+                try:
+                    count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                    total_rows += count
+                except sqlite3.OperationalError:
+                    pass
+        return {
+            "totalTables": total_tables,
+            "totalRows": total_rows,
+        }
+
+
 @app.get(f"{settings.api_prefix}/data-overview/tables")
 def list_tables():
     """List all tables grouped by database part."""
@@ -120,7 +140,7 @@ def list_tables():
                 "name": group_info["name"],
                 "tables": tables,
             })
-        return {"groups": result}
+        return result
 
 
 @app.get(f"{settings.api_prefix}/data-overview/tables/{{table_name}}")
@@ -508,6 +528,7 @@ def get_import_status(batch_id: int):
     return result
 
 
+@app.get(f"{settings.api_prefix}/import/history")
 @app.get(f"{settings.api_prefix}/import/batches")
 def list_import_batches(
     page: int = Query(default=1, ge=1),
