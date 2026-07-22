@@ -1,6 +1,4 @@
 import type {
-  CapabilityDetail,
-  CapabilityTreeNode,
   ImportBatch,
   ImportResult,
   TableDetail,
@@ -158,12 +156,8 @@ export async function fetchCapabilities(params: {
   return request(`/capabilities?${searchParams}`);
 }
 
-export async function fetchCapabilityDetail(capabilityId: number): Promise<CapabilityDetail> {
-  return request<CapabilityDetail>(`/capabilities/${capabilityId}`);
-}
-
-export async function fetchCapabilityTree(): Promise<CapabilityTreeNode> {
-  return request<CapabilityTreeNode>("/capabilities/graph-tree");
+export async function fetchCapabilityDetail(capabilityId: number) {
+  return request(`/capabilities/${capabilityId}`);
 }
 
 // ============================================================
