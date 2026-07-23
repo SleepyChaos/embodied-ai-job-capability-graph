@@ -13,13 +13,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import load_settings
+from .capability_graph_service import CapabilityGraphService
+from .career_graph_service import CareerGraphService
+from .career_spectrum_service import CareerSpectrumService
 from .database import Database
 from .import_service import ImportService
+from .llm_capability_service import CapabilityLLMService, DeepSeekClient, LLMCapabilityError
 
 
 settings = load_settings()
 database = Database(settings.database_path)
 import_service = ImportService(database)
+capability_graph_service = CapabilityGraphService(database)
+career_graph_service = CareerGraphService(database)
+career_spectrum_service = CareerSpectrumService(database)
+llm_capability_service = CapabilityLLMService(
+    database,
+    DeepSeekClient(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+    ),
+)
 
 app = FastAPI(
     title="岗位智能分析图谱 API",
@@ -109,7 +125,9 @@ def get_data_overview():
         # Get schema version
         schema_version = None
         try:
-            row = conn.execute("SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1").fetchone()
+            row = conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY applied_at DESC, rowid DESC LIMIT 1"
+            ).fetchone()
             if row:
                 schema_version = str(row[0])
         except sqlite3.OperationalError:
@@ -197,6 +215,27 @@ TABLE_DISPLAY_NAMES = {
 }
 
 
+def _data_type_category(declared_type: str) -> str:
+    normalized = declared_type.upper()
+    if "INT" in normalized:
+        return "integer"
+    if any(token in normalized for token in ("CHAR", "CLOB", "TEXT")):
+        return "text"
+    if "BLOB" in normalized or not normalized:
+        return "blob"
+    if any(token in normalized for token in ("REAL", "FLOA", "DOUB")):
+        return "real"
+    return "numeric"
+
+
+def _data_preview_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {"kind": "blob", "bytes": len(value)}
+    if isinstance(value, str) and len(value) > 800:
+        return value[:800] + "…"
+    return value
+
+
 @app.get(f"{settings.api_prefix}/data-overview/tables/{{table_name}}")
 def get_table_detail(
     table_name: str,
@@ -213,24 +252,64 @@ def get_table_detail(
         if not table_info:
             raise HTTPException(404, f"表 {table_name} 不存在")
 
-        # Get columns
-        columns = []
-        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall():
-            columns.append({
-                "name": row["name"],
-                "type": row["type"],
-                "nullable": not row["notnull"],
-                "primaryKey": bool(row["pk"]),
-                "description": COLUMN_DESCRIPTIONS.get(table_name, {}).get(row["name"], ""),
-            })
-
         # Get foreign keys
         foreign_keys = []
         for fk in conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall():
             foreign_keys.append({
-                "fromColumn": fk["from"],
-                "toTable": fk["table"],
-                "toColumn": fk["to"],
+                "id": int(fk["id"]),
+                "sequence": int(fk["seq"]),
+                "table": fk["table"],
+                "column": fk["to"],
+                "from": fk["from"],
+                "onUpdate": fk["on_update"],
+                "onDelete": fk["on_delete"],
+            })
+        foreign_keys_by_column: dict[str, list[dict[str, Any]]] = {}
+        for foreign_key in foreign_keys:
+            foreign_keys_by_column.setdefault(foreign_key["from"], []).append(foreign_key)
+
+        # Get indexes and the single-column unique constraints they represent.
+        indexes = []
+        unique_columns: set[str] = set()
+        for idx in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
+            idx_dict = dict(idx)
+            idx_name = idx_dict["name"]
+            idx_columns = [
+                col["name"]
+                for col in conn.execute(f"PRAGMA index_info({idx_name})").fetchall()
+                if col["name"] is not None
+            ]
+            idx_unique = bool(idx_dict["unique"])
+            if idx_unique and len(idx_columns) == 1:
+                unique_columns.add(idx_columns[0])
+            indexes.append({
+                "name": idx_name,
+                "unique": idx_unique,
+                "origin": idx_dict.get("origin", ""),
+                "partial": bool(idx_dict.get("partial", 0)),
+                "columns": idx_columns,
+            })
+
+        # Return the complete column contract consumed by DataOverview.tsx.
+        columns = []
+        primary_key_columns = []
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall():
+            name = row["name"]
+            declared_type = row["type"] or ""
+            primary_key_position = int(row["pk"])
+            if primary_key_position:
+                primary_key_columns.append((primary_key_position, name))
+            columns.append({
+                "position": int(row["cid"]),
+                "name": name,
+                "description": COLUMN_DESCRIPTIONS.get(table_name, {}).get(name, ""),
+                "declaredType": declared_type,
+                "typeCategory": _data_type_category(declared_type),
+                "nullable": not bool(row["notnull"]) and not bool(primary_key_position),
+                "defaultValue": row["dflt_value"],
+                "primaryKeyPosition": primary_key_position or None,
+                "unique": name in unique_columns,
+                "foreignKeys": foreign_keys_by_column.get(name, []),
             })
 
         # Get incoming references (tables that reference this table)
@@ -252,32 +331,18 @@ def get_table_detail(
             except sqlite3.OperationalError:
                 pass
 
-        # Get indexes
-        indexes = []
-        for idx in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
-            idx_dict = dict(idx)
-            idx_name = idx_dict["name"]
-            idx_unique = bool(idx_dict["unique"])
-            idx_origin = idx_dict.get("origin", "")
-            idx_partial = bool(idx_dict.get("partial", 0))
-            idx_columns = []
-            for col in conn.execute(f"PRAGMA index_info({idx_name})").fetchall():
-                idx_columns.append(col["name"])
-            indexes.append({
-                "name": idx_name,
-                "unique": idx_unique,
-                "origin": idx_origin,
-                "partial": idx_partial,
-                "columns": idx_columns,
-            })
-
         # Get row count
         total = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
         # Get paginated data
         offset = (page - 1) * page_size
+        order_clause = ""
+        if primary_key_columns:
+            order_clause = " ORDER BY " + ", ".join(
+                name for _, name in sorted(primary_key_columns)
+            )
         rows = conn.execute(
-            f"SELECT * FROM {table_name} LIMIT ? OFFSET ?",
+            f"SELECT * FROM {table_name}{order_clause} LIMIT ? OFFSET ?",
             (page_size, offset)
         ).fetchall()
 
@@ -306,7 +371,10 @@ def get_table_detail(
             "foreignKeys": foreign_keys,
             "incomingReferences": incoming_references,
             "indexes": indexes,
-            "rows": [dict(row) for row in rows],
+            "rows": [
+                {key: _data_preview_value(value) for key, value in dict(row).items()}
+                for row in rows
+            ],
             "page": {
                 "page": page,
                 "pageSize": page_size,
@@ -634,6 +702,7 @@ def get_company(company_id: int):
 async def import_xlsx(
     file: UploadFile = File(...),
     sub_direction_id: int | None = Query(default=None, alias="subDirectionId"),
+    extract_capabilities: bool = Query(default=True, alias="extractCapabilities"),
 ):
     """Upload and import an XLSX file."""
     if not file.filename or not file.filename.endswith(".xlsx"):
@@ -650,6 +719,23 @@ async def import_xlsx(
 
         # Run import
         result = import_service.import_xlsx(temp_path, sub_direction_id)
+        extraction_results = []
+        if extract_capabilities:
+            for career_unit_id in result.career_unit_ids:
+                try:
+                    extraction = llm_capability_service.extract_career_unit(career_unit_id)
+                    extraction_results.append({
+                        "careerUnitId": career_unit_id,
+                        "runId": extraction["run"]["id"],
+                        "status": extraction["run"]["status"],
+                        "mentionCount": len(extraction["mentions"]),
+                    })
+                except Exception as error:
+                    extraction_results.append({
+                        "careerUnitId": career_unit_id,
+                        "status": "failed",
+                        "error": str(error),
+                    })
 
         return {
             "batchId": result.batch_id,
@@ -664,6 +750,7 @@ async def import_xlsx(
                 "aliasesCreated": result.aliases_created,
             },
             "errors": result.errors[:10],  # Limit error details
+            "capabilityExtractions": extraction_results,
         }
     finally:
         # Cleanup temp file
@@ -677,6 +764,217 @@ def get_import_status(batch_id: int):
     if result is None:
         raise HTTPException(404, "导入批次不存在")
     return result
+
+
+# ============================================================
+# Dynamic capability graph
+# ============================================================
+
+
+@app.get(f"{settings.api_prefix}/capability-graph/tree")
+def get_capability_graph(depth: int = Query(default=3, ge=1, le=3)):
+    payload = capability_graph_service.tree()
+    if depth >= 3:
+        return payload
+    visible = {
+        node["id"] for node in payload["nodes"]
+        if int(node["data"].get("level", 0)) <= depth
+    }
+    payload["nodes"] = [node for node in payload["nodes"] if node["id"] in visible]
+    payload["edges"] = [
+        edge for edge in payload["edges"]
+        if edge["source"] in visible and edge["target"] in visible
+    ]
+    payload["meta"]["partial"] = True
+    return payload
+
+
+@app.get(f"{settings.api_prefix}/capability-graph/capabilities/{{capability_id}}")
+def get_capability_graph_detail(capability_id: int):
+    detail = capability_graph_service.detail(capability_id)
+    if detail is None:
+        raise HTTPException(404, "能力总称不存在")
+    return detail
+
+
+@app.get(f"{settings.api_prefix}/career-graph/overview")
+def get_career_graph(
+    node: str | None = Query(default=None),
+    neighborLimit: int = Query(default=14, ge=4, le=30),
+):
+    return career_graph_service.neighborhood(node, neighborLimit)
+
+
+@app.get(f"{settings.api_prefix}/career-graph/directory")
+def get_career_graph_directory():
+    return career_graph_service.directory()
+
+
+@app.get(f"{settings.api_prefix}/career-graph/jobs/{{job_id}}")
+def get_career_graph_job_detail(job_id: int):
+    detail = career_graph_service.job_detail(job_id)
+    if detail is None:
+        raise HTTPException(404, "职业 JD 不存在")
+    return detail
+
+
+@app.get(f"{settings.api_prefix}/career-spectrum")
+def get_career_spectrum():
+    return career_spectrum_service.overview()
+
+
+# ============================================================
+# LLM capability extraction and governance
+# ============================================================
+
+@app.get(f"{settings.api_prefix}/capability-extraction/status")
+def get_capability_extraction_status():
+    return llm_capability_service.status()
+
+
+@app.post(f"{settings.api_prefix}/capability-extraction/career-units/{{career_unit_id}}")
+def extract_career_unit_capabilities(
+    career_unit_id: int,
+    force: bool = Query(default=False),
+):
+    try:
+        return llm_capability_service.extract_career_unit(career_unit_id, force=force)
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except LLMCapabilityError as error:
+        raise HTTPException(502, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/capability-extraction/batch")
+def extract_capability_batch(
+    limit: int = Query(default=10, ge=1, le=100),
+    force: bool = Query(default=False),
+):
+    with database.read() as conn:
+        rows = conn.execute(
+            """
+            SELECT cu.id
+            FROM career_units cu
+            WHERE length(trim(COALESCE(cu.jd_description,''))) > 0
+              AND (
+                ? = 1 OR NOT EXISTS (
+                    SELECT 1 FROM capability_extraction_runs r
+                    WHERE r.career_unit_id=cu.id
+                      AND r.model=?
+                        AND r.prompt_version='llm-capability-v3-confidence-automation'
+                      AND r.status IN ('completed','completed_with_review','failed')
+                )
+              )
+            ORDER BY cu.id
+            LIMIT ?
+            """,
+            (1 if force else 0, settings.llm_model, limit),
+        ).fetchall()
+    results = []
+    for row in rows:
+        career_unit_id = int(row["id"])
+        try:
+            result = llm_capability_service.extract_career_unit(career_unit_id, force=force)
+            results.append({
+                "careerUnitId": career_unit_id,
+                "runId": result["run"]["id"],
+                "status": result["run"]["status"],
+                "mentionCount": len(result["mentions"]),
+            })
+        except Exception as error:
+            results.append({
+                "careerUnitId": career_unit_id,
+                "status": "failed",
+                "error": str(error),
+            })
+    return {"items": results, "count": len(results)}
+
+
+@app.get(f"{settings.api_prefix}/capability-extraction/runs/{{run_id}}")
+def get_capability_extraction_run(run_id: int):
+    try:
+        return llm_capability_service.get_run(run_id)
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+
+
+@app.get(f"{settings.api_prefix}/capability-governance/pending/{{kind}}")
+def list_pending_capability_governance(
+    kind: str,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    try:
+        return {"items": llm_capability_service.list_pending(kind, limit)}
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.get(f"{settings.api_prefix}/capability-governance/summary")
+def get_capability_governance_summary():
+    return llm_capability_service.governance_summary()
+
+
+@app.get(f"{settings.api_prefix}/capability-governance/capabilities")
+def list_active_capabilities(
+    limit: int = Query(default=500, ge=1, le=1000),
+):
+    return {"items": llm_capability_service.list_active_capabilities(limit)}
+
+
+@app.post(f"{settings.api_prefix}/capability-governance/bootstrap")
+def bootstrap_pending_capabilities():
+    try:
+        return llm_capability_service.bootstrap_pending_capabilities()
+    except LLMCapabilityError as error:
+        raise HTTPException(502, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/capability-governance/categories/{{candidate_id}}/review")
+def review_capability_category(candidate_id: int, body: dict[str, Any]):
+    try:
+        return llm_capability_service.review_category_candidate(
+            candidate_id,
+            str(body.get("decision") or ""),
+            target_category_id=body.get("targetCategoryId"),
+            approved_name=body.get("approvedName"),
+            review_note=str(body.get("reviewNote") or ""),
+        )
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/capability-governance/capabilities/{{candidate_id}}/review")
+def review_capability_candidate(candidate_id: int, body: dict[str, Any]):
+    try:
+        return llm_capability_service.review_capability_candidate(
+            candidate_id,
+            str(body.get("decision") or ""),
+            target_capability_id=body.get("targetCapabilityId"),
+            approved_name=body.get("approvedName"),
+            review_note=str(body.get("reviewNote") or ""),
+        )
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/capability-governance/normalizations/{{review_id}}/review")
+def review_capability_normalization(review_id: int, body: dict[str, Any]):
+    try:
+        return llm_capability_service.review_normalization(
+            review_id,
+            str(body.get("decision") or ""),
+            str(body.get("reviewNote") or ""),
+        )
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
 
 
 def to_camel_case(snake_str: str) -> str:

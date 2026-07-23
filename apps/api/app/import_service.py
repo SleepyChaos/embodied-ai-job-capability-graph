@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .database import Database
-from .vectorization import normalize_label, pack_vector
+from .vectorization import normalize_label
 
 
 # XLSX column mapping (based on the provided XLSX structure)
@@ -47,6 +47,7 @@ class ImportResult:
     errors: list[dict[str, Any]] = field(default_factory=list)
     capabilities_created: int = 0
     aliases_created: int = 0
+    career_unit_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -275,16 +276,13 @@ class ImportService:
                 if not col_indices.get("job_title"):
                     raise ValueError("XLSX must contain a '岗位' column")
 
-                # Initialize capability extractor
-                extractor = CapabilityExtractor(conn)
-
                 # Process rows
                 for row_num, row in enumerate(ws.iter_rows(min_row=2), start=2):
                     result.total_count += 1
                     try:
                         self._process_row(
                             conn, row, col_indices, row_num,
-                            sub_direction_id, extractor, result
+                            sub_direction_id, result
                         )
                     except Exception as e:
                         result.fail_count += 1
@@ -333,7 +331,6 @@ class ImportService:
         col_indices: dict[str, int],
         row_num: int,
         default_sub_direction_id: int | None,
-        extractor: CapabilityExtractor,
         result: ImportResult,
     ) -> None:
         """Process a single XLSX row."""
@@ -352,19 +349,16 @@ class ImportService:
         company_name = get_value("company")
         company_id = self._get_or_create_company(conn, company_name) if company_name else None
 
-        # Get JD description for capability extraction
+        # Capability extraction is handled after import by CapabilityLLMService.
         jd_description = get_value("jd_description") or ""
-
-        # Extract capabilities
-        extracted = extractor.extract(jd_description)
 
         # Create career unit
         cursor = conn.execute("""
             INSERT INTO career_units (
                 sub_direction_id, company_id, job_title, city, salary,
                 experience, education, url, jd_description, other_info,
-                data_source, source_platform, collected_at, capability_requirements
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            data_source, source_platform, collected_at, capability_requirements
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         """, (
             default_sub_direction_id,
             company_id,
@@ -379,22 +373,9 @@ class ImportService:
             get_value("data_source"),
             get_value("source_platform"),
             get_value("collected_at"),
-            self._format_capability_requirements(extracted),
         ))
         career_unit_id = cursor.lastrowid
-
-        # Create capability links
-        for cap in extracted:
-            alias_id = self._get_or_create_capability(conn, cap, result)
-            if alias_id:
-                try:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO job_capability_links
-                        (career_unit_id, capability_alias_id, extraction_method, confidence, evidence_text)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (career_unit_id, alias_id, "dictionary", cap.confidence, cap.evidence_text))
-                except sqlite3.IntegrityError:
-                    pass
+        result.career_unit_ids.append(int(career_unit_id))
 
         result.success_count += 1
 

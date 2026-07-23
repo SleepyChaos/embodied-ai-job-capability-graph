@@ -1,4 +1,4 @@
-import type { DataOverviewPayload, DataTableDetail, Evidence, GraphPayload, GraphPayloadV2, JobDetail, JobSummary, Page, VectorizationRun } from "./types";
+import type { ActiveCapability, CapabilityCandidate, CapabilityGraphDetail, CareerGraphDirectory, CareerGraphJobDetail, CareerSpectrumPayload, CategoryCandidate, DataOverviewPayload, DataTableDetail, Evidence, GovernanceSummary, GraphPayload, GraphPayloadV2, JobDetail, JobSummary, NormalizationCandidate, Page, VectorizationRun } from "./types";
 
 const API_PREFIX = "/api/v1";
 
@@ -35,6 +35,39 @@ export const api = {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     return request<DataTableDetail>(`/data-overview/tables/${encodeURIComponent(tableName)}?${params}`, signal);
   },
+  getGovernanceSummary(signal?: AbortSignal) {
+    return request<GovernanceSummary>("/capability-governance/summary", signal);
+  },
+  getCapabilityCandidates(signal?: AbortSignal) {
+    return request<{ items: CapabilityCandidate[] }>("/capability-governance/pending/capabilities?limit=500", signal);
+  },
+  getActiveCapabilities(signal?: AbortSignal) {
+    return request<{ items: ActiveCapability[] }>("/capability-governance/capabilities?limit=1000", signal);
+  },
+  getCategoryCandidates(signal?: AbortSignal) {
+    return request<{ items: CategoryCandidate[] }>("/capability-governance/pending/categories?limit=500", signal);
+  },
+  getNormalizationCandidates(signal?: AbortSignal) {
+    return request<{ items: NormalizationCandidate[] }>("/capability-governance/pending/normalizations?limit=500", signal);
+  },
+  reviewCapabilityCandidate(candidateId: number, body: Record<string, unknown>) {
+    return mutate<{ id: number; status: string; resolvedCapabilityId: number | null }>(
+      `/capability-governance/capabilities/${candidateId}/review`,
+      body,
+    );
+  },
+  reviewCategoryCandidate(candidateId: number, body: Record<string, unknown>) {
+    return mutate<{ id: number; status: string; resolvedCategoryId: number | null }>(
+      `/capability-governance/categories/${candidateId}/review`,
+      body,
+    );
+  },
+  reviewNormalizationCandidate(reviewId: number, body: Record<string, unknown>) {
+    return mutate<{ id: number; status: string }>(
+      `/capability-governance/normalizations/${reviewId}/review`,
+      body,
+    );
+  },
   listJobs(query = "", pageSize = 30, signal?: AbortSignal) {
     const params = new URLSearchParams({ q: query, pageSize: String(pageSize) });
     return request<Page<JobSummary>>(`/jobs?${params}`, signal);
@@ -61,8 +94,22 @@ export const api = {
   getCapabilityGraph(signal?: AbortSignal) {
     return request<GraphPayloadV2>("/capability-graph/tree?depth=3", signal);
   },
-  getCareerGraph(topK = 4, threshold = 0.25, signal?: AbortSignal) {
-    return request<GraphPayloadV2>(`/career-graph/overview?topK=${topK}&threshold=${threshold}`, signal);
+  getCapabilityGraphDetail(capabilityId: number, signal?: AbortSignal) {
+    return request<CapabilityGraphDetail>(`/capability-graph/capabilities/${capabilityId}`, signal);
+  },
+  getCareerGraph(nodeKey?: string, neighborLimit = 14, signal?: AbortSignal) {
+    const params = new URLSearchParams({ neighborLimit: String(neighborLimit) });
+    if (nodeKey) params.set("node", nodeKey);
+    return request<GraphPayloadV2>(`/career-graph/overview?${params}`, signal);
+  },
+  getCareerGraphDirectory(signal?: AbortSignal) {
+    return request<CareerGraphDirectory>("/career-graph/directory", signal);
+  },
+  getCareerGraphJobDetail(jobId: number, signal?: AbortSignal) {
+    return request<CareerGraphJobDetail>(`/career-graph/jobs/${jobId}`, signal);
+  },
+  getCareerSpectrum(signal?: AbortSignal) {
+    return request<CareerSpectrumPayload>("/career-spectrum", signal);
   },
   createVectorizationRun(job: Record<string, string>) {
     return mutate<{ runId: number; status: string }>("/vectorization/runs", { source: "manual", job });

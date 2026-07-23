@@ -161,6 +161,98 @@ export type DataTableDetail = {
   page: { page: number; pageSize: number; total: number };
 };
 
+export type GovernanceQueueKind = "capabilities" | "categories" | "normalizations";
+
+export type GovernanceSummary = {
+  capability_count: number;
+  category_count: number;
+  normalization_count: number;
+  active_capability_count: number;
+  active_alias_count: number;
+  completed_run_count: number;
+};
+
+export type CapabilityEvidenceDetail = {
+  id: number;
+  mention_id: number;
+  evidence_text: string;
+  evidence_section: string;
+  source_field: "job_title" | "jd_description" | "other_info" | "combined_text";
+  start_offset: number;
+  end_offset: number;
+  ordinal: number;
+  is_primary: 0 | 1;
+  source_hash: string;
+};
+
+export type CapabilityCandidate = {
+  id: number;
+  proposed_name: string;
+  normalized_name: string;
+  description: string;
+  category_code: string | null;
+  category_name: string | null;
+  direction_code: string | null;
+  direction_name: string | null;
+  career_unit_id: number;
+  job_title: string;
+  surface_name: string;
+  evidence_text: string;
+  evidence_section: string;
+  evidence_details: CapabilityEvidenceDetail[];
+  requirement_level: string;
+  extraction_confidence: number;
+  classification_confidence: number;
+  suggested_capability_id: number | null;
+  suggested_capability_name: string | null;
+  suggested_capability_description: string | null;
+  suggested_relation: "same" | "broader" | "narrower" | "related" | "different" | null;
+  suggested_confidence: number | null;
+  suggested_reasoning: string | null;
+};
+
+export type ActiveCapability = {
+  id: number;
+  name: string;
+  description: string | null;
+  category_id: number;
+  category_code: string;
+  category_name: string;
+  direction_code: string;
+  direction_name: string;
+  aliases: string | null;
+};
+
+export type CategoryCandidate = {
+  id: number;
+  proposed_name: string;
+  proposed_description: string;
+  direction_code: string;
+  direction_name: string;
+  confidence: number;
+  career_unit_id: number;
+  job_title: string;
+};
+
+export type NormalizationCandidate = {
+  id: number;
+  surface_name: string;
+  proposed_canonical_name: string;
+  description: string;
+  evidence_text: string;
+  evidence_section: string;
+  evidence_details: CapabilityEvidenceDetail[];
+  requirement_level: string;
+  career_unit_id: number;
+  job_title: string;
+  candidate_capability_id: number;
+  candidate_capability_name: string;
+  candidate_capability_description: string;
+  relation: "same" | "broader" | "narrower" | "related" | "different" | "uncertain";
+  confidence: number;
+  reasoning: string;
+};
+
 export type GraphNodeV2 = {
   id: string;
   type: "capability" | "career";
@@ -203,7 +295,106 @@ export type GraphPayloadV2 = {
   nodes: GraphNodeV2[];
   edges: GraphEdgeV2[];
   combos: GraphComboV2[];
-  meta: { partial: boolean; stale: boolean; coverage: number; warnings: string[] };
+  meta: {
+    partial: boolean;
+    stale: boolean;
+    coverage: number;
+    warnings: string[];
+    live?: boolean;
+    focusNodeId?: string;
+  };
+};
+
+export type CapabilityGraphDetail = {
+  id: number;
+  name: string;
+  description: string;
+  path: { code: string; name: string }[];
+  aliases: { id: number; name: string; type: string; confidence: number }[];
+  jobs: {
+    id: number;
+    title: string;
+    company: string | null;
+    confidence: number;
+    evidence: string | null;
+    matchedAliases: string[];
+    extractionMethods: string[];
+  }[];
+};
+
+export type CareerGraphJobDetail = {
+  id: number;
+  title: string;
+  city: string;
+  salary: string;
+  experience: string;
+  education: string;
+  description: string;
+  url: string;
+  processed: boolean;
+  company: { id: number | null; name: string | null; jobCount: number };
+  capabilities: {
+    id: number;
+    name: string;
+    description: string;
+    category: string;
+    direction: string;
+    confidence: number;
+    aliases: string[];
+    evidence: string[];
+  }[];
+};
+
+export type CareerGraphDirectory = {
+  at: string;
+  items: GraphNodeV2[];
+  metrics: Record<string, number>;
+};
+
+export type CareerSpectrumDirection = {
+  id: number;
+  code: string;
+  name: string;
+  sortOrder: number;
+  count: number;
+  color: string;
+};
+
+export type CareerSpectrumJob = {
+  id: number;
+  title: string;
+  companyId: number | null;
+  company: string | null;
+  city: string;
+  salary: string;
+  experience: string;
+  education: string;
+  capabilityCount: number;
+  averageConfidence: number;
+  directionId: number;
+  directionCode: string;
+  directionName: string;
+  directionOrder: number;
+  subDirectionId: number;
+  subDirectionCode: string;
+  subDirectionName: string;
+  color: string;
+  classificationSource: string;
+};
+
+export type CareerSpectrumPayload = {
+  snapshot: {
+    name: string;
+    at: string;
+    metrics: Record<string, number>;
+  };
+  directions: CareerSpectrumDirection[];
+  jobs: CareerSpectrumJob[];
+  meta: {
+    live: boolean;
+    classificationSource: string;
+    warnings: string[];
+  };
 };
 
 export type MatchCandidate = {

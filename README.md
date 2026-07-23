@@ -60,6 +60,29 @@ pnpm dev
 
 演示库不含原始 JD，因此可浏览双图谱和聚合画像；岗位匹配实验室可计算能力向量，但语义向量需要另外下载模型。
 
+### LLM 能力抽取
+
+当前三库架构支持使用 DeepSeek 对 JD 进行能力抽取、六大方向分类和语义等价判断。密钥只通过环境变量提供：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "在本机设置的密钥"
+$env:EMBODIED_LLM_BASE_URL = "https://api.deepseek.com"
+$env:EMBODIED_LLM_MODEL = "deepseek-v4-flash"
+```
+
+首次使用先执行迁移：
+
+```powershell
+.\apps\api\.venv\Scripts\python.exe scripts\apply_migration_005.py
+.\apps\api\.venv\Scripts\python.exe scripts\apply_migration_006.py
+```
+
+单条回算使用 `POST /api/v1/capability-extraction/career-units/{career_unit_id}`，
+批量回算使用 `POST /api/v1/capability-extraction/batch?limit=10`。
+
+LLM 不直接创建正式分类和能力总称。无法高置信归并的结果进入候选审核接口。完整说明见
+[`docs/06_llm_capability_pipeline.md`](docs/06_llm_capability_pipeline.md)。
+
 ## 可选语义模型
 
 ```powershell

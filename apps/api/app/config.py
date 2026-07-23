@@ -13,6 +13,10 @@ class Settings:
     model_dir: Path | None = None
     model_local_only: bool = False
     inline_worker: bool = True
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-v4-flash"
+    llm_timeout_seconds: float = 120.0
 
 
 def load_settings() -> Settings:
@@ -26,4 +30,8 @@ def load_settings() -> Settings:
         model_dir=Path(model_dir_value).resolve() if model_dir_value else project_root / "models",
         model_local_only=os.getenv("EMBODIED_MODEL_LOCAL_ONLY", "0") == "1",
         inline_worker=os.getenv("EMBODIED_INLINE_WORKER", "1") == "1",
+        llm_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+        llm_base_url=os.getenv("EMBODIED_LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+        llm_model=os.getenv("EMBODIED_LLM_MODEL", "deepseek-v4-flash"),
+        llm_timeout_seconds=float(os.getenv("EMBODIED_LLM_TIMEOUT_SECONDS", "120")),
     )

@@ -1,4 +1,5 @@
 import {
+  ClipboardCheck,
   ArrowLeft,
   ArrowRight,
   Braces,
@@ -14,6 +15,7 @@ import {
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api";
+import { GovernanceReview } from "./GovernanceReview";
 import type {
   DataColumn,
   DataOverviewPayload,
@@ -23,6 +25,7 @@ import type {
 } from "../types";
 
 type DetailView = "schema" | "rows";
+type DataWorkspace = "browser" | "review";
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 
@@ -37,6 +40,10 @@ function initialView(): DetailView {
 function initialPage() {
   const value = Number(new URLSearchParams(location.search).get("page") || 1);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+}
+
+function initialWorkspace(): DataWorkspace {
+  return new URLSearchParams(location.search).get("workspace") === "review" ? "review" : "browser";
 }
 
 function formatBytes(bytes: number) {
@@ -112,6 +119,7 @@ export function DataOverview() {
   const [view, setView] = useState<DetailView>(initialView);
   const [page, setPage] = useState(initialPage);
   const [query, setQuery] = useState("");
+  const [workspace, setWorkspace] = useState<DataWorkspace>(initialWorkspace);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -157,6 +165,13 @@ export function DataOverview() {
     history.replaceState(null, "", `${location.pathname}?${params}`);
   }, [page, selectedTable, view]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    params.set("section", "data");
+    if (workspace === "review") params.set("workspace", "review"); else params.delete("workspace");
+    history.replaceState(null, "", `${location.pathname}?${params}`);
+  }, [workspace]);
+
   const tableByName = useMemo(() => new Map(overview?.tables.map((table) => [table.name, table]) ?? []), [overview]);
   const visibleGroups = useMemo(() => (overview?.groups ?? []).map((group) => ({
     ...group,
@@ -176,7 +191,12 @@ export function DataOverview() {
       <div className="database-file"><HardDrive size={17} /><span><strong>{overview?.database.fileName ?? "正在连接数据库"}</strong><small>{overview ? `${formatBytes(overview.database.fileSizeBytes)} · schema ${overview.database.schemaVersion}` : "读取元数据中"}</small></span></div>
     </header>
 
-    <section className="database-metrics" aria-label="数据库概览指标">
+    <nav className="data-workspace-switch" aria-label="数据总览工作区">
+      <button type="button" className={workspace === "browser" ? "active" : ""} onClick={() => setWorkspace("browser")}><Database size={15} />数据库浏览</button>
+      <button type="button" className={workspace === "review" ? "active" : ""} onClick={() => setWorkspace("review")}><ClipboardCheck size={15} />能力审核<span>{workspace === "review" ? "正在审核" : "候选队列"}</span></button>
+    </nav>
+
+    {workspace === "browser" ? <><section className="database-metrics" aria-label="数据库概览指标">
       <div><Table2 size={18} /><span><strong>{overview?.summary.tableCount ?? "—"}</strong><small>业务表</small></span></div>
       <div><Rows3 size={18} /><span><strong>{overview ? numberFormatter.format(overview.summary.totalRows) : "—"}</strong><small>数据行</small></span></div>
       <div><Link2 size={18} /><span><strong>{overview?.summary.relationshipCount ?? "—"}</strong><small>外键关系</small></span></div>
@@ -213,6 +233,6 @@ export function DataOverview() {
         </> : <div className="table-loading"><Database size={28} /><span>{error ?? "正在读取数据表…"}</span></div>}
         {error && detail ? <div className="table-error">{error}</div> : null}
       </section>
-    </div>
+    </div></> : <GovernanceReview />}
   </main>;
 }
