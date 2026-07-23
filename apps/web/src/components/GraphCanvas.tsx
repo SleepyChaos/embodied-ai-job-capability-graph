@@ -86,18 +86,10 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
         padding: 44,
         layout: isCapability
           ? {
-              type: "mindmap",
-              direction: "LR",
-              getHeight: (d: any) => {
-                const l = Number(d?.data?.level ?? 2);
-                return (nodeSizes[l] ?? nodeSizes[3]!)[1];
-              },
-              getWidth: (d: any) => {
-                const l = Number(d?.data?.level ?? 2);
-                return (nodeSizes[l] ?? nodeSizes[3]!)[0];
-              },
-              getHGap: () => 40,
-              getVGap: () => 10,
+              type: "dendrogram",
+              radial: true,
+              nodeSep: 20,
+              rankSep: 80,
             }
           : isCareerCommunity
             ? {
@@ -125,37 +117,45 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
               }
             : { type: "combo-combined", preventOverlap: true, spacing: 30 },
         node: {
-          type: isCapability ? "rect" : "circle",
+          type: isCapability ? "circle" : "circle",
           style: {
             ...(isCapability
               ? {
                   size: (datum: any) => {
                     const l = Number(datum.data?.level ?? 2);
-                    return nodeSizes[l] ?? nodeSizes[3]!;
+                    // Root: 24, Direction: 18, Category: 14, Capability: 10
+                    const sizes = { 0: 28, 1: 20, 2: 14, 3: 10 };
+                    return sizes[l] ?? 10;
                   },
                   fill: (datum: any) => {
                     const l = Number(datum.data?.level ?? 2);
-                    const baseColor = String(datum.data?.color ?? "#4b5c6e");
-                    if (l === 0) return "#3a4a5c";
+                    const baseColor = String(datum.data?.color ?? "#2F6BFF");
+                    if (l === 0) return baseColor;
                     if (l === 1) return baseColor;
-                    if (l === 2) return lightenColor(baseColor, 0.25);
-                    return lightenColor(baseColor, 0.5);
+                    if (l === 2) return lightenColor(baseColor, 0.15);
+                    return lightenColor(baseColor, 0.3);
                   },
-                  radius: 8,
-                  labelText: (datum: any) => String(datum.data?.label ?? ""),
+                  labelText: (datum: any) => {
+                    const l = Number(datum.data?.level ?? 2);
+                    // Only show labels for root, direction and category nodes
+                    if (l <= 2) return String(datum.data?.label ?? "");
+                    return "";
+                  },
                   labelFill: (datum: any) => {
                     const l = Number(datum.data?.level ?? 2);
-                    return l <= 1 ? "#ffffff" : "#2d3748";
+                    return l <= 1 ? "#152033" : "#637089";
                   },
                   labelFontSize: (datum: any) => {
                     const l = Number(datum.data?.level ?? 2);
-                    return Math.max(9, 13 - l);
+                    return l === 0 ? 14 : l === 1 ? 12 : 10;
                   },
-                  labelPlacement: "center",
-                  labelMaxWidth: (datum: any) => {
+                  labelFontWeight: (datum: any) => {
                     const l = Number(datum.data?.level ?? 2);
-                    return ((nodeSizes[l] ?? nodeSizes[3]!)[0] - 8);
+                    return l <= 1 ? 600 : 400;
                   },
+                  labelPlacement: "bottom",
+                  labelOffsetY: 8,
+                  labelMaxWidth: 100,
                   labelWordWrap: true,
                   stroke: "#ffffff",
                   lineWidth: 2,
@@ -180,11 +180,21 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, Props>(function GraphCa
           state: { selected: { stroke: "#f59e0b", lineWidth: 4, shadowColor: "rgba(245,158,11,.35)", shadowBlur: 10 } },
         },
         edge: {
-          type: isCapability ? "cubic-horizontal" : "line",
+          type: isCapability ? "line" : "line",
           style: {
-            stroke: (datum: any) => datum.data?.edgeType === "SIMILAR_TO" ? "#8fa4c7" : "#c8d2e3",
-            lineWidth: (datum: any) => 1 + Number(datum.data?.score ?? datum.data?.weight ?? 0),
-            opacity: (datum: any) => 0.35 + Number(datum.data?.score ?? 0.5) * 0.55,
+            stroke: (datum: any) => {
+              if (datum.data?.edgeType === "SIMILAR_TO") return "#8fa4c7";
+              // For capability tree, use a light blue color
+              return "#c8d2e3";
+            },
+            lineWidth: (datum: any) => {
+              if (isCapability) return 1.5;
+              return 1 + Number(datum.data?.score ?? datum.data?.weight ?? 0);
+            },
+            opacity: (datum: any) => {
+              if (isCapability) return 0.6;
+              return 0.35 + Number(datum.data?.score ?? 0.5) * 0.55;
+            },
             endArrow: false,
             cursor: "pointer",
           },
