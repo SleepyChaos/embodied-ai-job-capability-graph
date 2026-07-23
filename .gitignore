@@ -21,7 +21,10 @@ database/*_report.json
 # Models, crawlers, and local working data
 /models/
 /具身智能岗位采集/
-/data/
+/data/*.xlsx
+/data/*.csv
+/data/*.db-*
+!/data/embodied_ai_jobs_v4.db
 /tmp/
 /.agents/
 /.pnpm-store/
