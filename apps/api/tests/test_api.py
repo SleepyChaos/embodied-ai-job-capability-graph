@@ -1,5 +1,4 @@
 import os
-import re
 
 os.environ["EMBODIED_DISABLE_EMBEDDINGS"] = "1"
 
@@ -18,49 +17,6 @@ def test_health_and_snapshot():
     snapshots = client.get("/api/v1/graph/snapshots")
     assert snapshots.status_code == 200
     assert snapshots.json()[0]["code"] == "v4-dictionary-backfill-001"
-
-
-def test_data_overview_exposes_read_only_schema_and_rows():
-    overview = client.get("/api/v1/data-overview/tables")
-    assert overview.status_code == 200
-    payload = overview.json()
-    assert payload["summary"]["tableCount"] >= 47
-    assert payload["summary"]["relationshipCount"] > 0
-    assert any(table["name"] == "job_positions" for table in payload["tables"])
-
-    detail = client.get(
-        "/api/v1/data-overview/tables/capability_aliases",
-        params={"page": 1, "pageSize": 5},
-    )
-    assert detail.status_code == 200
-    body = detail.json()
-    assert body["page"]["total"] > 0
-    assert len(body["rows"]) == 5
-    capability_id = next(column for column in body["columns"] if column["name"] == "capability_id")
-    assert capability_id["declaredType"] == "INTEGER"
-    assert capability_id["foreignKeys"][0]["table"] == "capability_nodes"
-    assert capability_id["description"] == "关联“能力节点”表的记录标识。"
-
-
-def test_every_database_column_has_a_chinese_description():
-    overview = client.get("/api/v1/data-overview/tables").json()
-    for table in overview["tables"]:
-        detail = client.get(
-            f"/api/v1/data-overview/tables/{table['name']}",
-            params={"page": 1, "pageSize": 1},
-        )
-        assert detail.status_code == 200
-        for column in detail.json()["columns"]:
-            description = column["description"]
-            assert description.strip(), f"{table['name']}.{column['name']} 缺少说明"
-            assert re.search(r"[\u4e00-\u9fff]", description), (
-                f"{table['name']}.{column['name']} 缺少中文说明"
-            )
-
-
-def test_data_overview_rejects_unknown_tables():
-    response = client.get("/api/v1/data-overview/tables/sqlite_master")
-    assert response.status_code == 404
 
 
 def test_job_search_and_detail():

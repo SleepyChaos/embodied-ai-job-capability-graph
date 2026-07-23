@@ -27,7 +27,7 @@ type DetailView = "schema" | "rows";
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 
 function initialTable() {
-  return new URLSearchParams(location.search).get("table") || "job_positions";
+  return new URLSearchParams(location.search).get("table") || "career_units";
 }
 
 function initialView(): DetailView {
@@ -122,7 +122,7 @@ export function DataOverview() {
       setOverview(result);
       setSelectedTable((current) => result.tables.some((table) => table.name === current)
         ? current
-        : result.tables.find((table) => table.name === "job_positions")?.name ?? result.tables[0]?.name ?? "");
+        : result.tables.find((table) => table.name === "career_units")?.name ?? result.tables[0]?.name ?? "");
     }).catch((reason: Error) => {
       if (reason.name !== "AbortError") setError(reason.message);
     });

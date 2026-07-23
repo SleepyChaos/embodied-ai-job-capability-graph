@@ -1,93 +1,38 @@
 from __future__ import annotations
 
+import os
+import shutil
 import sqlite3
+import tempfile
 import uuid
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, model_validator
 
 from .config import load_settings
-from .data_overview import DataOverviewRepository
 from .database import Database
-from .repository import KnowledgeGraphRepository
-from .v4_repository import V4Repository
-from .vectorization import VectorizationService, build_default_embedding_provider
+from .import_service import ImportService
 
 
 settings = load_settings()
 database = Database(settings.database_path)
-repository = KnowledgeGraphRepository(database)
-v4_repository = V4Repository(database)
-data_overview_repository = DataOverviewRepository(database)
+import_service = ImportService(database)
 
 app = FastAPI(
-    title="具身智能岗位能力图谱 API",
-    version="0.4.0",
-    description="读取 SQLite v4 事实库，提供能力/职业双图谱、岗位向量计算与人工审核。",
+    title="岗位智能分析图谱 API",
+    version="0.5.0",
+    description="三库架构：职业数据库、能力数据库、企业数据库",
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
-
-
-class ManualJob(BaseModel):
-    company: str = ""
-    title: str = Field(min_length=1, max_length=200)
-    responsibilities: str = ""
-    requirements: str = ""
-    niceToHave: str = ""
-    location: str = ""
-    seniority: str = ""
-
-
-class VectorizationRequest(BaseModel):
-    source: Literal["manual", "raw_jd", "batch"] = "manual"
-    rawJdId: int | None = None
-    batchId: int | None = None
-    job: ManualJob | None = None
-
-    @model_validator(mode="after")
-    def validate_source(self):
-        if self.source == "manual" and self.job is None:
-            raise ValueError("manual source requires job")
-        if self.source == "raw_jd" and self.rawJdId is None:
-            raise ValueError("raw_jd source requires rawJdId")
-        return self
-
-
-class MatchDecisionRequest(BaseModel):
-    runId: int
-    candidateId: int | None = None
-    decision: Literal["POSTING_VERSION", "EXACT_DUPLICATE", "SAME_CAREER", "RELATED_CAREER", "NEW_CAREER_CANDIDATE", "INSUFFICIENT_EVIDENCE", "REJECT"]
-    targetJobId: int | None = None
-    categoryL1: str | None = None
-    categoryL2: str | None = None
-    reviewer: str = "local-admin"
-    note: str | None = None
-
-
-class CapabilityDecisionRequest(BaseModel):
-    status: Literal["approved", "rejected", "needs_revision"]
-    capabilityId: int | None = None
-    reviewer: str = "local-admin"
-    note: str | None = None
-
-
-def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
-    if settings.admin_token and x_admin_token != settings.admin_token:
-        raise HTTPException(401, "管理员令牌无效")
-
-
-def process_vectorization_run(run_id: int) -> None:
-    provider = build_default_embedding_provider()
-    VectorizationService(settings.database_path, provider).process_run(run_id)
 
 
 @app.middleware("http")
@@ -107,228 +52,674 @@ async def http_error(request: Request, error: HTTPException):
     )
 
 
+# ============================================================
+# Health
+# ============================================================
+
 @app.get(f"{settings.api_prefix}/health")
 def health():
-    fact_store = database.health()
-    status = "ok" if fact_store["status"] == "ok" else "degraded"
-    return {"status": status, "factStore": fact_store, "graphStore": "sqlite-fallback"}
+    db_health = database.health()
+    return {
+        "status": "ok" if db_health["status"] == "ok" else "degraded",
+        "database": db_health,
+    }
 
 
-@app.get(f"{settings.api_prefix}/data-overview/tables")
-def data_overview_tables():
-    return data_overview_repository.overview()
+# ============================================================
+# Data Overview (generic table browser)
+# ============================================================
+
+TABLE_GROUPS = {
+    "career": {
+        "name": "职业数据库",
+        "tables": ["career_directions", "career_sub_directions", "career_units", "job_capability_links"],
+    },
+    "capability": {
+        "name": "能力数据库",
+        "tables": ["capability_directions", "capability_categories", "capabilities", "capability_aliases"],
+    },
+    "enterprise": {
+        "name": "企业数据库",
+        "tables": ["companies"],
+    },
+}
+
+TABLE_DESCRIPTIONS = {
+    "career_directions": "职业大方向（6个）",
+    "career_sub_directions": "职业二级子方向（如4.1、4.2）",
+    "career_units": "职业单元（JD条目）",
+    "job_capability_links": "岗位-能力关联（多对多）",
+    "capability_directions": "能力大方向（6个）",
+    "capability_categories": "能力二级分类",
+    "capabilities": "能力项（底层）",
+    "capability_aliases": "能力别称/同义词",
+    "companies": "企业信息",
+    "import_batches": "导入批次记录",
+}
+
+
+@app.get(f"{settings.api_prefix}/data-overview")
+def get_data_overview():
+    """Get overall database overview (matches original frontend format)."""
+    with database.read() as conn:
+        # Get database file info
+        db_path = settings.database_path
+        file_size = db_path.stat().st_size if db_path.exists() else 0
+        
+        # Get schema version
+        schema_version = None
+        try:
+            row = conn.execute("SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1").fetchone()
+            if row:
+                schema_version = str(row[0])
+        except sqlite3.OperationalError:
+            pass
+        
+        # Build tables list
+        tables = []
+        total_rows = 0
+        non_empty_count = 0
+        total_fks = 0
+        
+        for group_key, group_info in TABLE_GROUPS.items():
+            for table_name in group_info["tables"]:
+                try:
+                    row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                except sqlite3.OperationalError:
+                    row_count = 0
+                
+                # Get column count
+                col_count = 0
+                try:
+                    cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+                    col_count = len(cols)
+                except sqlite3.OperationalError:
+                    pass
+                
+                # Get foreign key count
+                fk_count = 0
+                try:
+                    fks = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+                    fk_count = len(fks)
+                    total_fks += fk_count
+                except sqlite3.OperationalError:
+                    pass
+                
+                total_rows += row_count
+                if row_count > 0:
+                    non_empty_count += 1
+                
+                tables.append({
+                    "name": table_name,
+                    "displayName": TABLE_DISPLAY_NAMES.get(table_name, table_name),
+                    "description": TABLE_DESCRIPTIONS.get(table_name, ""),
+                    "group": group_info["name"],
+                    "rowCount": row_count,
+                    "columnCount": col_count,
+                    "foreignKeyCount": fk_count,
+                })
+        
+        # Build groups
+        groups = [
+            {"name": info["name"], "tables": info["tables"]}
+            for info in TABLE_GROUPS.values()
+        ]
+        
+        return {
+            "database": {
+                "fileName": db_path.name,
+                "schemaVersion": schema_version,
+                "fileSizeBytes": file_size,
+            },
+            "summary": {
+                "tableCount": len(tables),
+                "nonEmptyTableCount": non_empty_count,
+                "totalRows": total_rows,
+                "relationshipCount": total_fks,
+            },
+            "groups": groups,
+            "tables": tables,
+        }
+
+
+# Display names for tables
+TABLE_DISPLAY_NAMES = {
+    "career_directions": "职业方向",
+    "career_sub_directions": "职业子方向",
+    "career_units": "职业单元",
+    "job_capability_links": "岗位能力关联",
+    "capability_directions": "能力方向",
+    "capability_categories": "能力分类",
+    "capabilities": "能力项",
+    "capability_aliases": "能力别称",
+    "companies": "企业",
+    "import_batches": "导入批次",
+}
 
 
 @app.get(f"{settings.api_prefix}/data-overview/tables/{{table_name}}")
-def data_overview_table(
+def get_table_detail(
     table_name: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, alias="pageSize", ge=1, le=100),
 ):
-    try:
-        return data_overview_repository.table_detail(table_name, page, page_size)
-    except LookupError as error:
-        raise HTTPException(404, str(error)) from error
+    """Get table schema and paginated data (matches original frontend format)."""
+    with database.read() as conn:
+        # Check table exists
+        table_info = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        ).fetchone()
+        if not table_info:
+            raise HTTPException(404, f"表 {table_name} 不存在")
+
+        # Get columns
+        columns = []
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall():
+            columns.append({
+                "name": row["name"],
+                "type": row["type"],
+                "nullable": not row["notnull"],
+                "primaryKey": bool(row["pk"]),
+                "description": COLUMN_DESCRIPTIONS.get(table_name, {}).get(row["name"], ""),
+            })
+
+        # Get foreign keys
+        foreign_keys = []
+        for fk in conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall():
+            foreign_keys.append({
+                "fromColumn": fk["from"],
+                "toTable": fk["table"],
+                "toColumn": fk["to"],
+            })
+
+        # Get incoming references (tables that reference this table)
+        incoming_references = []
+        all_tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        for t in all_tables:
+            other_table = t["name"]
+            if other_table == table_name:
+                continue
+            try:
+                fks = conn.execute(f"PRAGMA foreign_key_list({other_table})").fetchall()
+                for fk in fks:
+                    if fk["table"] == table_name:
+                        incoming_references.append({
+                            "table": other_table,
+                            "column": fk["from"],
+                            "targetColumn": fk["to"],
+                        })
+            except sqlite3.OperationalError:
+                pass
+
+        # Get indexes
+        indexes = []
+        for idx in conn.execute(f"PRAGMA index_list({table_name})").fetchall():
+            idx_dict = dict(idx)
+            idx_name = idx_dict["name"]
+            idx_unique = bool(idx_dict["unique"])
+            idx_origin = idx_dict.get("origin", "")
+            idx_partial = bool(idx_dict.get("partial", 0))
+            idx_columns = []
+            for col in conn.execute(f"PRAGMA index_info({idx_name})").fetchall():
+                idx_columns.append(col["name"])
+            indexes.append({
+                "name": idx_name,
+                "unique": idx_unique,
+                "origin": idx_origin,
+                "partial": idx_partial,
+                "columns": idx_columns,
+            })
+
+        # Get row count
+        total = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+
+        # Get paginated data
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"SELECT * FROM {table_name} LIMIT ? OFFSET ?",
+            (page_size, offset)
+        ).fetchall()
+
+        # Build table summary
+        col_count = len(columns)
+        fk_count = len(foreign_keys)
+        
+        # Find group
+        group_name = ""
+        for gk, gi in TABLE_GROUPS.items():
+            if table_name in gi["tables"]:
+                group_name = gi["name"]
+                break
+
+        return {
+            "table": {
+                "name": table_name,
+                "displayName": TABLE_DISPLAY_NAMES.get(table_name, table_name),
+                "description": TABLE_DESCRIPTIONS.get(table_name, ""),
+                "group": group_name,
+                "rowCount": total,
+                "columnCount": col_count,
+                "foreignKeyCount": fk_count,
+            },
+            "columns": columns,
+            "foreignKeys": foreign_keys,
+            "incomingReferences": incoming_references,
+            "indexes": indexes,
+            "rows": [dict(row) for row in rows],
+            "page": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+            },
+        }
 
 
-@app.get(f"{settings.api_prefix}/jobs")
-def list_jobs(
+# Column descriptions for better understanding
+COLUMN_DESCRIPTIONS = {
+    "career_units": {
+        "id": "主键",
+        "sub_direction_id": "所属子方向ID",
+        "company_id": "所属企业ID",
+        "job_title": "岗位名称",
+        "city": "工作城市",
+        "salary": "薪资范围",
+        "experience": "经验要求",
+        "education": "学历要求",
+        "jd_description": "JD描述",
+        "semantic_vector": "语义向量（用于相似度检索）",
+    },
+    "capabilities": {
+        "id": "主键",
+        "category_id": "所属分类ID",
+        "name": "能力名称",
+        "description": "能力描述",
+    },
+    "capability_aliases": {
+        "id": "主键",
+        "capability_id": "所属能力ID",
+        "alias": "别称",
+        "alias_type": "别称类型",
+    },
+}
+
+
+# ============================================================
+# Career Database APIs
+# ============================================================
+
+@app.get(f"{settings.api_prefix}/career-directions")
+def list_career_directions():
+    """List all career directions with sub-directions."""
+    with database.read() as conn:
+        directions = conn.execute(
+            "SELECT * FROM career_directions ORDER BY sort_order"
+        ).fetchall()
+
+        result = []
+        for d in directions:
+            sub_dirs = conn.execute(
+                "SELECT * FROM career_sub_directions WHERE direction_id = ? ORDER BY sort_order",
+                (d["id"],)
+            ).fetchall()
+            result.append({
+                **dict(d),
+                "subDirections": [dict(s) for s in sub_dirs],
+            })
+        return {"items": result}
+
+
+@app.get(f"{settings.api_prefix}/career-units")
+def list_career_units(
     q: str | None = Query(default=None, max_length=100),
-    category: str | None = None,
-    emerging: bool | None = None,
+    sub_direction_id: int | None = Query(default=None, alias="subDirectionId"),
+    company_id: int | None = Query(default=None, alias="companyId"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
 ):
-    return repository.list_jobs(q, category, emerging, page, page_size)
+    """List career units with filtering and pagination."""
+    with database.read() as conn:
+        conditions = []
+        params: list[Any] = []
+
+        if q:
+            conditions.append("(cu.job_title LIKE ? OR cu.jd_description LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+        if sub_direction_id:
+            conditions.append("cu.sub_direction_id = ?")
+            params.append(sub_direction_id)
+        if company_id:
+            conditions.append("cu.company_id = ?")
+            params.append(company_id)
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM career_units cu {where}", params
+        ).fetchone()[0]
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(f"""
+            SELECT cu.*, c.name as company_name,
+                   csd.name as sub_direction_name, csd.code as sub_direction_code,
+                   cd.name as direction_name
+            FROM career_units cu
+            LEFT JOIN companies c ON c.id = cu.company_id
+            LEFT JOIN career_sub_directions csd ON csd.id = cu.sub_direction_id
+            LEFT JOIN career_directions cd ON cd.id = csd.direction_id
+            {where}
+            ORDER BY cu.created_at DESC
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset]).fetchall()
+
+        return {
+            "items": [dict(r) for r in rows],
+            "pagination": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+                "totalPages": (total + page_size - 1) // page_size if total > 0 else 0,
+            },
+        }
 
 
-@app.get(f"{settings.api_prefix}/jobs/{{job_id}}")
-def get_job(job_id: int):
-    result = repository.get_job(job_id)
-    if result is None:
-        raise HTTPException(404, "岗位不存在")
-    return result
+@app.get(f"{settings.api_prefix}/career-units/{{unit_id}}")
+def get_career_unit(unit_id: int):
+    """Get career unit detail with capability links."""
+    with database.read() as conn:
+        row = conn.execute("""
+            SELECT cu.*, c.name as company_name,
+                   csd.name as sub_direction_name, csd.code as sub_direction_code,
+                   cd.name as direction_name
+            FROM career_units cu
+            LEFT JOIN companies c ON c.id = cu.company_id
+            LEFT JOIN career_sub_directions csd ON csd.id = cu.sub_direction_id
+            LEFT JOIN career_directions cd ON cd.id = csd.direction_id
+            WHERE cu.id = ?
+        """, (unit_id,)).fetchone()
+
+        if not row:
+            raise HTTPException(404, "职业单元不存在")
+
+        # Get capability links
+        links = conn.execute("""
+            SELECT jcl.*, ca.alias_name, cap.name as capability_name,
+                   cc.name as category_name
+            FROM job_capability_links jcl
+            JOIN capability_aliases ca ON ca.id = jcl.capability_alias_id
+            JOIN capabilities cap ON cap.id = ca.capability_id
+            LEFT JOIN capability_categories cc ON cc.id = cap.category_id
+            WHERE jcl.career_unit_id = ?
+            ORDER BY jcl.confidence DESC
+        """, (unit_id,)).fetchall()
+
+        return {
+            **dict(row),
+            "capabilityLinks": [dict(l) for l in links],
+        }
 
 
-@app.get(f"{settings.api_prefix}/skills")
-def list_skills(
+# ============================================================
+# Capability Database APIs
+# ============================================================
+
+@app.get(f"{settings.api_prefix}/capability-directions")
+def list_capability_directions():
+    """List all capability directions with categories."""
+    with database.read() as conn:
+        directions = conn.execute(
+            "SELECT * FROM capability_directions ORDER BY sort_order"
+        ).fetchall()
+
+        result = []
+        for d in directions:
+            categories = conn.execute(
+                "SELECT * FROM capability_categories WHERE direction_id = ? ORDER BY sort_order",
+                (d["id"],)
+            ).fetchall()
+            result.append({
+                **dict(d),
+                "categories": [dict(c) for c in categories],
+            })
+        return {"items": result}
+
+
+@app.get(f"{settings.api_prefix}/capabilities")
+def list_capabilities(
     q: str | None = Query(default=None, max_length=100),
-    skill_type: str | None = Query(default=None, alias="skillType"),
+    category_id: int | None = Query(default=None, alias="categoryId"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
 ):
-    return repository.list_skills(q, skill_type, page, page_size)
+    """List capabilities with filtering."""
+    with database.read() as conn:
+        conditions = []
+        params: list[Any] = []
 
+        if q:
+            conditions.append("(cap.name LIKE ? OR cap.code LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+        if category_id:
+            conditions.append("cap.category_id = ?")
+            params.append(category_id)
 
-@app.get(f"{settings.api_prefix}/graph/snapshots")
-def list_snapshots():
-    return repository.list_snapshots()
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM capabilities cap {where}", params
+        ).fetchone()[0]
 
-@app.get(f"{settings.api_prefix}/graph/overview")
-def graph_overview(
-    aggregation: str = Query(default="category", pattern="^(category|job|none)$"),
-    max_nodes: int = Query(default=500, alias="maxNodes", ge=1, le=2000),
-    max_edges: int = Query(default=1000, alias="maxEdges", ge=1, le=5000),
-):
-    return repository.overview(aggregation, max_nodes, max_edges)
+        offset = (page - 1) * page_size
+        rows = conn.execute(f"""
+            SELECT cap.*, cc.name as category_name, cc.code as category_code,
+                   cd.name as direction_name
+            FROM capabilities cap
+            LEFT JOIN capability_categories cc ON cc.id = cap.category_id
+            LEFT JOIN capability_directions cd ON cd.id = cc.direction_id
+            {where}
+            ORDER BY cap.sort_order, cap.name
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset]).fetchall()
 
-
-@app.get(f"{settings.api_prefix}/graph/neighborhood")
-def graph_neighborhood(
-    node: str,
-    depth: int = Query(default=1, ge=1, le=3),
-    max_nodes: int = Query(default=80, alias="maxNodes", ge=1, le=500),
-    max_edges: int = Query(default=160, alias="maxEdges", ge=1, le=1000),
-):
-    result = repository.neighborhood(node, depth, max_nodes, max_edges)
-    if result is None:
-        raise HTTPException(404, "图谱节点不存在")
-    return result
-
-
-@app.get(f"{settings.api_prefix}/evidence")
-def list_evidence(
-    mapping_id: int | None = Query(default=None, alias="mappingId", ge=1),
-    job_id: int | None = Query(default=None, alias="jobId", ge=1),
-    skill_id: int | None = Query(default=None, alias="skillId", ge=1),
-    verified: bool | None = None,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
-):
-    return repository.list_evidence(mapping_id, job_id, skill_id, verified, page, page_size)
-
-
-@app.get(f"{settings.api_prefix}/evidence/{{evidence_id}}")
-def get_evidence(evidence_id: int):
-    result = repository.get_evidence(evidence_id)
-    if result is None:
-        raise HTTPException(404, "证据不存在")
-    return result
-
-
-@app.get(f"{settings.api_prefix}/capability-graph/tree")
-def capability_graph_tree(
-    root_id: int | None = Query(default=None, alias="rootId", ge=1),
-    depth: int = Query(default=3, ge=1, le=4),
-):
-    try:
-        return v4_repository.capability_graph(root_id, depth)
-    except LookupError as error:
-        raise HTTPException(404, str(error)) from error
-
-
-@app.get(f"{settings.api_prefix}/capabilities/search")
-def capability_search(q: str = Query(min_length=1, max_length=100), limit: int = Query(default=20, ge=1, le=100)):
-    return {"items": v4_repository.search_capabilities(q, limit)}
+        return {
+            "items": [dict(r) for r in rows],
+            "pagination": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+                "totalPages": (total + page_size - 1) // page_size if total > 0 else 0,
+            },
+        }
 
 
 @app.get(f"{settings.api_prefix}/capabilities/{{capability_id}}")
-def capability_detail(capability_id: int):
-    result = v4_repository.capability_detail(capability_id)
-    if result is None:
-        raise HTTPException(404, "能力节点不存在")
-    return result
+def get_capability(capability_id: int):
+    """Get capability detail with aliases."""
+    with database.read() as conn:
+        row = conn.execute("""
+            SELECT cap.*, cc.name as category_name, cd.name as direction_name
+            FROM capabilities cap
+            LEFT JOIN capability_categories cc ON cc.id = cap.category_id
+            LEFT JOIN capability_directions cd ON cd.id = cc.direction_id
+            WHERE cap.id = ?
+        """, (capability_id,)).fetchone()
+
+        if not row:
+            raise HTTPException(404, "能力项不存在")
+
+        aliases = conn.execute(
+            "SELECT * FROM capability_aliases WHERE capability_id = ? ORDER BY confidence DESC",
+            (capability_id,)
+        ).fetchall()
+
+        return {
+            **dict(row),
+            "aliases": [dict(a) for a in aliases],
+        }
 
 
-@app.get(f"{settings.api_prefix}/capabilities/{{capability_id}}/relations")
-def capability_relations(capability_id: int):
-    return {"items": v4_repository.capability_relations(capability_id)}
+# ============================================================
+# Enterprise Database APIs
+# ============================================================
 
-
-@app.get(f"{settings.api_prefix}/capabilities/{{capability_id}}/jobs")
-def capability_jobs(capability_id: int):
-    return {"items": v4_repository.capability_jobs(capability_id)}
-
-
-@app.get(f"{settings.api_prefix}/career-graph/overview")
-def career_graph_overview(
-    top_k: int = Query(default=4, alias="topK", ge=1, le=12),
-    threshold: float = Query(default=0.25, ge=0, le=1),
+@app.get(f"{settings.api_prefix}/companies")
+def list_companies(
+    q: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
 ):
-    return v4_repository.career_graph(top_k, threshold)
+    """List companies with pagination."""
+    with database.read() as conn:
+        conditions = []
+        params: list[Any] = []
+
+        if q:
+            conditions.append("(name LIKE ? OR display_name LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM companies {where}", params
+        ).fetchone()[0]
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(f"""
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM career_units cu WHERE cu.company_id = c.id) as job_count
+            FROM companies c
+            {where}
+            ORDER BY c.name
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset]).fetchall()
+
+        return {
+            "items": [dict(r) for r in rows],
+            "pagination": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+                "totalPages": (total + page_size - 1) // page_size if total > 0 else 0,
+            },
+        }
 
 
-@app.get(f"{settings.api_prefix}/career-graph/jobs/{{job_id}}")
-def career_graph_job(job_id: int, top_k: int = Query(default=8, alias="topK", ge=1, le=20)):
-    result = v4_repository.job_focus(job_id, top_k)
-    if result is None:
-        raise HTTPException(404, "职业不存在")
-    return result
+@app.get(f"{settings.api_prefix}/companies/{{company_id}}")
+def get_company(company_id: int):
+    """Get company detail with associated career units."""
+    with database.read() as conn:
+        row = conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "企业不存在")
+
+        units = conn.execute("""
+            SELECT cu.id, cu.job_title, cu.city, cu.salary, cu.created_at
+            FROM career_units cu
+            WHERE cu.company_id = ?
+            ORDER BY cu.created_at DESC
+            LIMIT 50
+        """, (company_id,)).fetchall()
+
+        return {
+            **dict(row),
+            "careerUnits": [dict(u) for u in units],
+        }
 
 
-@app.get(f"{settings.api_prefix}/jobs/{{job_id}}/similarities")
-def job_similarities(job_id: int, top_k: int = Query(default=8, alias="topK", ge=1, le=20)):
-    result = v4_repository.job_focus(job_id, top_k)
-    if result is None:
-        raise HTTPException(404, "职业不存在")
-    return {"job": result["job"], "snapshot": result["snapshot"], "items": result["neighbors"]}
+# ============================================================
+# Import APIs
+# ============================================================
 
-
-@app.get(f"{settings.api_prefix}/job-similarities/{{job_a}}/{{job_b}}")
-def job_similarity(job_a: int, job_b: int):
-    result = v4_repository.similarity_detail(job_a, job_b)
-    if result is None:
-        raise HTTPException(404, "职业相似关系不存在")
-    return result
-
-
-@app.get(f"{settings.api_prefix}/career-communities")
-def career_communities():
-    return v4_repository.career_communities()
-
-
-@app.post(f"{settings.api_prefix}/vectorization/runs", status_code=202)
-def create_vectorization_run(
-    request: VectorizationRequest,
-    background_tasks: BackgroundTasks,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+@app.post(f"{settings.api_prefix}/import/xlsx", status_code=202)
+async def import_xlsx(
+    file: UploadFile = File(...),
+    sub_direction_id: int | None = Query(default=None, alias="subDirectionId"),
 ):
-    payload = request.model_dump()
-    run_id, created = v4_repository.create_run(payload, idempotency_key)
-    if created and settings.inline_worker:
-        background_tasks.add_task(process_vectorization_run, run_id)
-    return {"runId": run_id, "status": "queued" if created else "existing", "created": created}
+    """Upload and import an XLSX file."""
+    if not file.filename or not file.filename.endswith(".xlsx"):
+        raise HTTPException(400, "仅支持 .xlsx 格式文件")
+
+    # Save uploaded file to temp location
+    temp_dir = tempfile.mkdtemp()
+    temp_path = Path(temp_dir) / file.filename
+
+    try:
+        with open(temp_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        # Run import
+        result = import_service.import_xlsx(temp_path, sub_direction_id)
+
+        return {
+            "batchId": result.batch_id,
+            "batchCode": result.batch_code,
+            "status": "completed" if result.fail_count == 0 else "completed_with_errors",
+            "statistics": {
+                "total": result.total_count,
+                "success": result.success_count,
+                "skipped": result.skip_count,
+                "failed": result.fail_count,
+                "capabilitiesCreated": result.capabilities_created,
+                "aliasesCreated": result.aliases_created,
+            },
+            "errors": result.errors[:10],  # Limit error details
+        }
+    finally:
+        # Cleanup temp file
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-@app.get(f"{settings.api_prefix}/vectorization/runs/{{run_id}}")
-def get_vectorization_run(run_id: int):
-    result = v4_repository.run_result(run_id)
+@app.get(f"{settings.api_prefix}/import/status/{{batch_id}}")
+def get_import_status(batch_id: int):
+    """Get import batch status."""
+    result = import_service.get_import_status(batch_id)
     if result is None:
-        raise HTTPException(404, "向量任务不存在")
+        raise HTTPException(404, "导入批次不存在")
     return result
 
 
-@app.get(f"{settings.api_prefix}/vectorization/runs/{{run_id}}/matches")
-def get_vectorization_matches(run_id: int):
-    result = v4_repository.run_result(run_id)
-    if result is None:
-        raise HTTPException(404, "向量任务不存在")
-    return {"runId": run_id, "status": result["status"], "items": result["candidates"], "summary": result["resultSummary"]}
+def to_camel_case(snake_str: str) -> str:
+    """Convert snake_case to camelCase."""
+    components = snake_str.split("_")
+    return components[0] + "".join(x.title() for x in components[1:])
 
 
-@app.post(f"{settings.api_prefix}/job-match-decisions", status_code=201)
-def create_match_decision(request: MatchDecisionRequest, x_admin_token: str | None = Header(default=None)):
-    require_admin(x_admin_token)
-    try:
-        decision_id = v4_repository.decide_match(request.model_dump())
-    except LookupError as error:
-        raise HTTPException(404, str(error)) from error
-    except sqlite3.IntegrityError as error:
-        raise HTTPException(409, "该任务已经完成审核") from error
-    return {"decisionId": decision_id, "status": "recorded"}
+def dict_to_camel(d: dict) -> dict:
+    """Convert dict keys from snake_case to camelCase."""
+    return {to_camel_case(k): v for k, v in d.items()}
 
 
-@app.get(f"{settings.api_prefix}/capability-candidates")
-def list_capability_candidates(status: str = Query(default="pending", pattern="^(pending|approved|rejected|needs_revision)$")):
-    return {"items": v4_repository.capability_candidates(status)}
+@app.get(f"{settings.api_prefix}/import/history")
+@app.get(f"{settings.api_prefix}/import/batches")
+def list_import_batches(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
+):
+    """List import batches."""
+    with database.read() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM import_batches").fetchone()[0]
+        offset = (page - 1) * page_size
+        rows = conn.execute("""
+            SELECT * FROM import_batches
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (page_size, offset)).fetchall()
 
+        items = []
+        for r in rows:
+            item = dict_to_camel(dict(r))
+            # Map source_file to sourceFilename
+            if "sourceFile" in item:
+                item["sourceFilename"] = item.pop("sourceFile")
+            items.append(item)
 
-@app.post(f"{settings.api_prefix}/capability-candidates/{{candidate_id}}/decision")
-def decide_capability_candidate(candidate_id: int, request: CapabilityDecisionRequest, x_admin_token: str | None = Header(default=None)):
-    require_admin(x_admin_token)
-    try:
-        v4_repository.decide_capability_candidate(candidate_id, request.model_dump())
-    except LookupError as error:
-        raise HTTPException(404, str(error)) from error
-    return {"candidateId": candidate_id, "status": request.status}
+        return {
+            "items": items,
+            "pagination": {
+                "page": page,
+                "pageSize": page_size,
+                "total": total,
+                "totalPages": (total + page_size - 1) // page_size if total > 0 else 0,
+            },
+        }

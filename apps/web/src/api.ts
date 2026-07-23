@@ -29,7 +29,7 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   getDataOverview(signal?: AbortSignal) {
-    return request<DataOverviewPayload>("/data-overview/tables", signal);
+    return request<DataOverviewPayload>("/data-overview", signal);
   },
   getDataTable(tableName: string, page = 1, pageSize = 25, signal?: AbortSignal) {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });

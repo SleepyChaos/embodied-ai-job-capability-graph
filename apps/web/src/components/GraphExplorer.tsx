@@ -53,11 +53,11 @@ export function GraphExplorer() {
       const parentByChild = new Map(payload.edges.filter((edge) => edge.type === "PARENT_OF").map((edge) => [edge.target, edge.source]));
       let branch = selectedCapabilityId;
       while (branch && payload.nodes.find((node) => node.id === branch)?.data.level !== 1) branch = parentByChild.get(branch);
-      const visible = new Set(payload.nodes.filter((node) => Number(node.data.level) <= 1).map((node) => node.id));
+      const visible = new Set(payload.nodes.filter((node) => Number(node.data.level) <= 2).map((node) => node.id));
       if (branch) {
         visible.add(branch);
         let frontier = new Set([branch]);
-        for (let level = 0; level < 2; level += 1) {
+        for (let level = 0; level < 3; level += 1) {
           const next = new Set(payload.edges.filter((edge) => edge.type === "PARENT_OF" && frontier.has(edge.source)).map((edge) => edge.target));
           next.forEach((id) => visible.add(id));
           frontier = next;
