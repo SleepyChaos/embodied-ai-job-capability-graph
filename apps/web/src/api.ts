@@ -59,7 +59,7 @@ export const api = {
     return request<Page<Evidence>>(`/evidence?${params}`, signal);
   },
   getCapabilityGraph(signal?: AbortSignal) {
-    return request<GraphPayloadV2>("/capability-tree", signal);
+    return request<GraphPayloadV2>("/capability-graph/tree?depth=3", signal);
   },
   getCareerGraph(topK = 4, threshold = 0.25, signal?: AbortSignal) {
     return request<GraphPayloadV2>(`/career-graph/overview?topK=${topK}&threshold=${threshold}`, signal);

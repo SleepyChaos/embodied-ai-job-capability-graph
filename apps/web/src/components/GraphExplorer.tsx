@@ -50,8 +50,20 @@ export function GraphExplorer() {
   const displayPayload = useMemo(() => {
     if (!payload) return payload;
     if (kind === "capability") {
-      // For radial tree, show all nodes - the tree layout handles the hierarchy
-      return { ...payload, meta: { ...payload.meta, partial: false } };
+      const parentByChild = new Map(payload.edges.filter((edge) => edge.type === "PARENT_OF").map((edge) => [edge.target, edge.source]));
+      let branch = selectedCapabilityId;
+      while (branch && payload.nodes.find((node) => node.id === branch)?.data.level !== 1) branch = parentByChild.get(branch);
+      const visible = new Set(payload.nodes.filter((node) => Number(node.data.level) <= 2).map((node) => node.id));
+      if (branch) {
+        visible.add(branch);
+        let frontier = new Set([branch]);
+        for (let level = 0; level < 3; level += 1) {
+          const next = new Set(payload.edges.filter((edge) => edge.type === "PARENT_OF" && frontier.has(edge.source)).map((edge) => edge.target));
+          next.forEach((id) => visible.add(id));
+          frontier = next;
+        }
+      }
+      return { ...payload, nodes: payload.nodes.filter((node) => visible.has(node.id)), edges: payload.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target)), meta: { ...payload.meta, partial: true } };
     }
     if (mode !== "community") return payload;
     const connected = new Set(payload.edges.flatMap((edge) => [edge.source, edge.target]));
@@ -80,7 +92,7 @@ export function GraphExplorer() {
       <aside className="graph-index-panel">
         <div className="panel-kicker"><GitBranch size={14} />双图谱工作台</div>
         <h1>{kind === "capability" ? "能力图谱" : "职业图谱"}</h1>
-        <p>{kind === "capability" ? "径向树状图展示能力层级：方向 → 分类 → 能力项。" : "在六大职业方向中观察标准职业及经审核的相似关系。"}</p>
+        <p>{kind === "capability" ? "从具身智能根节点逐级查看能力方向、能力簇与三级技术能力。" : "在六大职业方向中观察标准职业及经审核的相似关系。"}</p>
         <div className="graph-kind-switch">
           <button className={kind === "capability" ? "active" : ""} onClick={() => { setKind("capability"); setSelectedId(undefined); }}>能力图谱</button>
           <button className={kind === "career" ? "active" : ""} onClick={() => { setKind("career"); setSelectedId(undefined); }}>职业图谱</button>
@@ -88,14 +100,14 @@ export function GraphExplorer() {
         {kind === "career" ? <div className="mode-switch"><button className={mode === "taxonomy" ? "active" : ""} onClick={() => setMode("taxonomy")}>标准分类</button><button className={mode === "community" ? "active" : ""} onClick={() => setMode("community")}>数据聚类</button></div> : null}
         <label className="graph-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={kind === "capability" ? "搜索能力或别名" : "搜索标准职业"} /></label>
         <div className="graph-directory" role="list">
-          {filtered.map((node) => <button role="listitem" className={selectedId === node.id ? "selected" : ""} key={node.id} onClick={() => setSelectedId(node.id)}><span className="directory-dot" style={{ background: String(node.data.color ?? "#155eef") }} /><span><strong>{node.data.label}</strong><small>{kind === "capability" ? `${node.data.kind === "direction" ? "方向" : node.data.kind === "category" ? "分类" : node.data.kind === "capability" ? "能力" : "根"} · ${node.data.aliasCount ?? 0} 别名` : `${node.data.categoryL2} · ${node.data.capabilityCount ?? 0} 项能力`}</small></span></button>)}
+          {filtered.map((node) => <button role="listitem" className={selectedId === node.id ? "selected" : ""} key={node.id} onClick={() => setSelectedId(node.id)}><span className="directory-dot" style={{ background: String(node.data.color ?? "#155eef") }} /><span><strong>{node.data.label}</strong><small>{kind === "capability" ? `L${node.data.level} · ${node.data.jobCount ?? 0} 个职业` : `${node.data.categoryL2} · ${node.data.capabilityCount ?? 0} 项能力`}</small></span></button>)}
         </div>
       </aside>
 
       <main className="graph-main-panel">
         <header className="graph-page-header">
-          <div><span>{kind === "capability" ? "径向树状图" : mode === "taxonomy" ? "标准分类网络" : "相似社区网络"}</span><h2>{kind === "capability" ? "能力层级结构" : payload?.snapshot.name ?? "读取最新快照"}</h2></div>
-          {kind !== "capability" && <div className="coverage-chip"><strong>{Math.round((payload?.meta.coverage ?? 0) * 100)}%</strong><span>画像覆盖率</span></div>}
+          <div><span>{kind === "capability" ? "有序根树" : mode === "taxonomy" ? "标准分类网络" : "相似社区网络"}</span><h2>{payload?.snapshot.name ?? "读取最新快照"}</h2></div>
+          <div className="coverage-chip"><strong>{Math.round((payload?.meta.coverage ?? 0) * 100)}%</strong><span>画像覆盖率</span></div>
         </header>
         {displayPayload?.meta.warnings.map((warning) => <div className="data-warning" key={warning}><AlertTriangle size={15} />{warning}</div>)}
         <section className="v4-graph-stage">
