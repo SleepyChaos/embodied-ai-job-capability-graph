@@ -83,6 +83,11 @@ $env:EMBODIED_LLM_MODEL = "deepseek-v4-flash"
 LLM 不直接创建正式分类和能力总称。无法高置信归并的结果进入候选审核接口。完整说明见
 [`docs/06_llm_capability_pipeline.md`](docs/06_llm_capability_pipeline.md)。
 
+职业聚类在已审批能力画像之上运行，不合并单条 JD。执行
+`scripts/apply_migration_010.py` 和 `scripts/apply_migration_011.py` 后，可在数据总览的“职业聚类”工作台查看正式职业簇和
+人工候选。完整规则与数据外发说明见
+[`docs/07_llm_career_clustering.md`](docs/07_llm_career_clustering.md)。
+
 ## 可选语义模型
 
 ```powershell

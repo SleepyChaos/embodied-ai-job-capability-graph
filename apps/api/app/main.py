@@ -14,10 +14,12 @@ from fastapi.responses import JSONResponse
 
 from .config import load_settings
 from .capability_graph_service import CapabilityGraphService
+from .career_clustering_service import CareerClusteringService
 from .career_graph_service import CareerGraphService
 from .career_spectrum_service import CareerSpectrumService
 from .database import Database
 from .import_service import ImportService
+from .jd_pipeline_service import JDPipelineService
 from .llm_capability_service import CapabilityLLMService, DeepSeekClient, LLMCapabilityError
 
 
@@ -35,6 +37,20 @@ llm_capability_service = CapabilityLLMService(
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
     ),
+)
+career_clustering_service = CareerClusteringService(
+    database,
+    DeepSeekClient(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        model=settings.llm_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+    ),
+)
+jd_pipeline_service = JDPipelineService(
+    database,
+    llm_capability_service,
+    career_clustering_service,
 )
 
 app = FastAPI(
@@ -88,7 +104,16 @@ def health():
 TABLE_GROUPS = {
     "career": {
         "name": "职业数据库",
-        "tables": ["career_directions", "career_sub_directions", "career_units", "job_capability_links"],
+        "tables": [
+            "career_directions",
+            "career_sub_directions",
+            "career_units",
+            "career_clusters",
+            "career_cluster_memberships",
+            "career_cluster_candidates",
+            "career_clustering_runs",
+            "job_capability_links",
+        ],
     },
     "capability": {
         "name": "能力数据库",
@@ -104,6 +129,10 @@ TABLE_DESCRIPTIONS = {
     "career_directions": "职业大方向（6个）",
     "career_sub_directions": "职业二级子方向（如4.1、4.2）",
     "career_units": "职业单元（JD条目）",
+    "career_clusters": "基于工作目标与已审批能力画像形成的职业簇",
+    "career_cluster_memberships": "单条JD与职业簇的隶属关系",
+    "career_cluster_candidates": "需要人工审核的职业簇候选",
+    "career_clustering_runs": "职业聚类模型运行及重试审计",
     "job_capability_links": "岗位-能力关联（多对多）",
     "capability_directions": "能力大方向（6个）",
     "capability_categories": "能力二级分类",
@@ -205,6 +234,10 @@ TABLE_DISPLAY_NAMES = {
     "career_directions": "职业方向",
     "career_sub_directions": "职业子方向",
     "career_units": "职业单元",
+    "career_clusters": "职业簇",
+    "career_cluster_memberships": "职业簇成员关系",
+    "career_cluster_candidates": "职业簇候选",
+    "career_clustering_runs": "职业聚类任务",
     "job_capability_links": "岗位能力关联",
     "capability_directions": "能力方向",
     "capability_categories": "能力分类",
@@ -396,6 +429,12 @@ COLUMN_DESCRIPTIONS = {
         "education": "学历要求",
         "jd_description": "JD描述",
         "semantic_vector": "语义向量（用于相似度检索）",
+        "capability_extraction_status": "能力提取状态：未开始/处理中/待审核/成功/失败",
+        "capability_extraction_failure_reason": "能力提取连续重试失败的最终原因",
+        "capability_extraction_status_at": "能力提取状态最后更新时间",
+        "career_clustering_status": "职业聚类状态：未开始/处理中/待审核/成功/失败",
+        "career_clustering_failure_reason": "职业聚类连续重试失败或人工拒绝的原因",
+        "career_clustering_status_at": "职业聚类状态最后更新时间",
     },
     "capabilities": {
         "id": "主键",
@@ -970,6 +1009,159 @@ def review_capability_normalization(review_id: int, body: dict[str, Any]):
             review_id,
             str(body.get("decision") or ""),
             str(body.get("reviewNote") or ""),
+        )
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+# ============================================================
+# LLM career clustering and governance
+# ============================================================
+
+@app.get(f"{settings.api_prefix}/jd-pipeline/summary")
+def get_jd_pipeline_summary():
+    return jd_pipeline_service.summary()
+
+
+@app.get(f"{settings.api_prefix}/jd-pipeline/jobs")
+def list_jd_pipeline_jobs(
+    q: str | None = Query(default=None, max_length=100),
+    source: str | None = Query(default=None, max_length=200),
+    capability_status: str | None = Query(default=None, alias="capabilityStatus"),
+    career_status: str | None = Query(default=None, alias="careerStatus"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, alias="pageSize", ge=1, le=100),
+):
+    try:
+        return jd_pipeline_service.list_jobs(
+            query=q,
+            source=source,
+            capability_status=capability_status,
+            career_status=career_status,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/jd-pipeline/process")
+def process_jd_pipeline(body: dict[str, Any]):
+    try:
+        career_unit_ids = [int(value) for value in body.get("careerUnitIds") or []]
+        return jd_pipeline_service.process(
+            career_unit_ids,
+            str(body.get("action") or ""),
+        )
+    except (TypeError, ValueError) as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.get(f"{settings.api_prefix}/career-clustering/status")
+def get_career_clustering_status():
+    try:
+        return career_clustering_service.status()
+    except sqlite3.OperationalError as error:
+        raise HTTPException(503, "请先执行数据库迁移 010") from error
+
+
+@app.post(f"{settings.api_prefix}/career-clustering/career-units/{{career_unit_id}}")
+def cluster_career_unit(
+    career_unit_id: int,
+    force: bool = Query(default=False),
+):
+    try:
+        return career_clustering_service.cluster_career_unit(career_unit_id, force=force)
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except LLMCapabilityError as error:
+        raise HTTPException(502, str(error)) from error
+
+
+@app.post(f"{settings.api_prefix}/career-clustering/batch")
+def cluster_career_batch(
+    limit: int = Query(default=5, ge=1, le=50),
+    force: bool = Query(default=False),
+):
+    with database.read() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT cu.id
+            FROM career_units cu
+            JOIN job_capability_links l ON l.career_unit_id=cu.id
+            JOIN capability_aliases a ON a.id=l.capability_alias_id
+            JOIN capabilities c ON c.id=a.capability_id AND c.status='active'
+            WHERE (
+                ?=1 OR (
+                  NOT EXISTS (
+                    SELECT 1 FROM career_cluster_memberships m
+                    WHERE m.career_unit_id=cu.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM career_cluster_candidates cand
+                    WHERE cand.career_unit_id=cu.id AND cand.status='pending'
+                  )
+                )
+            )
+            ORDER BY cu.id
+            LIMIT ?
+            """,
+            (1 if force else 0, limit),
+        ).fetchall()
+    results = []
+    for row in rows:
+        career_unit_id = int(row["id"])
+        try:
+            result = career_clustering_service.cluster_career_unit(
+                career_unit_id, force=force
+            )
+            results.append(
+                {
+                    "careerUnitId": career_unit_id,
+                    "runId": result["run"]["id"],
+                    "status": result["run"]["status"],
+                    "decision": result.get("decision"),
+                    "resolvedClusterId": result.get("resolvedClusterId"),
+                }
+            )
+        except Exception as error:
+            results.append(
+                {
+                    "careerUnitId": career_unit_id,
+                    "status": "failed",
+                    "error": str(error),
+                }
+            )
+    return {"items": results, "count": len(results)}
+
+
+@app.get(f"{settings.api_prefix}/career-clustering/candidates")
+def list_career_cluster_candidates(
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    return {"items": career_clustering_service.list_pending(limit)}
+
+
+@app.get(f"{settings.api_prefix}/career-clustering/clusters")
+def list_career_clusters(
+    limit: int = Query(default=500, ge=1, le=1000),
+):
+    return {"items": career_clustering_service.list_active(limit)}
+
+
+@app.post(f"{settings.api_prefix}/career-clustering/candidates/{{candidate_id}}/review")
+def review_career_cluster_candidate(candidate_id: int, body: dict[str, Any]):
+    try:
+        return career_clustering_service.review_candidate(
+            candidate_id,
+            str(body.get("decision") or ""),
+            target_cluster_id=body.get("targetClusterId"),
+            approved_name=body.get("approvedName"),
+            review_note=str(body.get("reviewNote") or ""),
         )
     except LookupError as error:
         raise HTTPException(404, str(error)) from error

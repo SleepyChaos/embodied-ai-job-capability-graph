@@ -13,7 +13,7 @@ client = TestClient(app)
 def test_health_and_snapshot():
     health = client.get("/api/v1/health")
     assert health.status_code == 200
-    assert health.json()["factStore"]["status"] == "ok"
+    assert health.json()["status"] == "ok"
     snapshots = client.get("/api/v1/graph/snapshots")
     assert snapshots.status_code == 200
     assert snapshots.json()[0]["code"] == "v4-dictionary-backfill-001"

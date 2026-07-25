@@ -11,11 +11,15 @@ import {
   Rows3,
   Search,
   Table2,
+  Workflow,
+  Waypoints,
 } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api";
 import { GovernanceReview } from "./GovernanceReview";
+import { CareerClusterReview } from "./CareerClusterReview";
+import { JDPipelineMonitor } from "./JDPipelineMonitor";
 import type {
   DataColumn,
   DataOverviewPayload,
@@ -25,7 +29,7 @@ import type {
 } from "../types";
 
 type DetailView = "schema" | "rows";
-type DataWorkspace = "browser" | "review";
+type DataWorkspace = "browser" | "review" | "career-cluster" | "pipeline";
 
 const numberFormatter = new Intl.NumberFormat("zh-CN");
 
@@ -43,7 +47,8 @@ function initialPage() {
 }
 
 function initialWorkspace(): DataWorkspace {
-  return new URLSearchParams(location.search).get("workspace") === "review" ? "review" : "browser";
+  const workspace = new URLSearchParams(location.search).get("workspace");
+  return workspace === "review" || workspace === "career-cluster" || workspace === "pipeline" ? workspace : "browser";
 }
 
 function formatBytes(bytes: number) {
@@ -168,7 +173,7 @@ export function DataOverview() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     params.set("section", "data");
-    if (workspace === "review") params.set("workspace", "review"); else params.delete("workspace");
+    if (workspace === "browser") params.delete("workspace"); else params.set("workspace", workspace);
     history.replaceState(null, "", `${location.pathname}?${params}`);
   }, [workspace]);
 
@@ -194,6 +199,8 @@ export function DataOverview() {
     <nav className="data-workspace-switch" aria-label="数据总览工作区">
       <button type="button" className={workspace === "browser" ? "active" : ""} onClick={() => setWorkspace("browser")}><Database size={15} />数据库浏览</button>
       <button type="button" className={workspace === "review" ? "active" : ""} onClick={() => setWorkspace("review")}><ClipboardCheck size={15} />能力审核<span>{workspace === "review" ? "正在审核" : "候选队列"}</span></button>
+      <button type="button" className={workspace === "career-cluster" ? "active" : ""} onClick={() => setWorkspace("career-cluster")}><Waypoints size={15} />职业聚类<span>{workspace === "career-cluster" ? "聚类治理" : "JD分组"}</span></button>
+      <button type="button" className={workspace === "pipeline" ? "active" : ""} onClick={() => setWorkspace("pipeline")}><Workflow size={15} />JD流程监控<span>{workspace === "pipeline" ? "批量管理" : "XLSX数据"}</span></button>
     </nav>
 
     {workspace === "browser" ? <><section className="database-metrics" aria-label="数据库概览指标">
@@ -233,6 +240,6 @@ export function DataOverview() {
         </> : <div className="table-loading"><Database size={28} /><span>{error ?? "正在读取数据表…"}</span></div>}
         {error && detail ? <div className="table-error">{error}</div> : null}
       </section>
-    </div></> : <GovernanceReview />}
+    </div></> : workspace === "review" ? <GovernanceReview /> : workspace === "career-cluster" ? <CareerClusterReview /> : <JDPipelineMonitor />}
   </main>;
 }

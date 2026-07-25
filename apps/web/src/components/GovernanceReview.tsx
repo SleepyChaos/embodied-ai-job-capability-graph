@@ -311,12 +311,12 @@ export function GovernanceReview() {
             <div>
               <dt>抽取可信度</dt>
               <dd>{confidenceLabel(selected.extraction_confidence)}</dd>
-              <small>判断能力是否确实由 JD 原文支持，以及建议称呼是否准确。低于 90% 整批重做；新总称超过 95% 可自动创建。</small>
+              <small>判断能力是否由 JD 原文支持及称呼是否准确。低于80%重做；80%～89.99%人工审核；达到90%可自动处理。</small>
             </div>
             <div>
               <dt>分类可信度</dt>
               <dd>{confidenceLabel(selected.classification_confidence)}</dd>
-              <small>判断该能力归入一级方向和二级分类是否准确。低于 90% 时整批退回重做。</small>
+              <small>判断一级方向和二级分类是否准确。低于80%重做；80%～89.99%人工审核；达到90%可自动处理。</small>
             </div>
           </dl> : null}
 

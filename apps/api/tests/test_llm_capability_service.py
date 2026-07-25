@@ -138,15 +138,15 @@ def test_rejects_cross_direction_existing_category():
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("extraction_confidence", 0.89),
-        ("classification_confidence", 0.899),
+        ("extraction_confidence", 0.79),
+        ("classification_confidence", 0.799),
     ],
 )
-def test_requests_retry_when_either_confidence_is_below_90_percent(field, value):
+def test_requests_retry_when_either_confidence_is_below_80_percent(field, value):
     directions, categories = taxonomy()
     payload = valid_payload()
     payload["capabilities"][0]["llm_assessment"][field] = value
-    with pytest.raises(LLMExtractionRetry, match="低于90%"):
+    with pytest.raises(LLMExtractionRetry, match="低于80%"):
         service()._validate_extraction(
             payload,
             "岗位要求：熟练使用ROS2开发机器人节点",
@@ -168,21 +168,44 @@ def test_requests_retry_when_canonical_name_has_no_chinese():
         )
 
 
+def test_accepts_manual_review_confidence_band():
+    directions, categories = taxonomy()
+    payload = valid_payload()
+    payload["capabilities"][0]["llm_assessment"]["extraction_confidence"] = 0.80
+    payload["capabilities"][0]["llm_assessment"]["classification_confidence"] = 0.899
+    items = service()._validate_extraction(
+        payload,
+        "岗位要求：熟练使用ROS2开发机器人节点",
+        directions,
+        categories,
+    )
+    assert items[0]["extraction_confidence"] == 0.80
+    assert items[0]["classification_confidence"] == 0.899
+
+
 def test_automation_threshold_boundaries():
     capability_service = service()
     assert capability_service._is_auto_merge(
-        {"matched_capability_id": 7, "relation": "same", "confidence": 0.95}
+        {"matched_capability_id": 7, "relation": "same", "confidence": 0.90}
     )
     assert not capability_service._is_auto_merge(
-        {"matched_capability_id": 7, "relation": "same", "confidence": 0.949}
+        {"matched_capability_id": 7, "relation": "same", "confidence": 0.899}
     )
-    base_item = {"extraction_confidence": 0.95, "category_id": 31}
+    base_item = {
+        "extraction_confidence": 0.90,
+        "classification_confidence": 0.90,
+        "category_id": 31,
+    }
     assert not capability_service._can_auto_create(base_item, None)
     assert capability_service._can_auto_create(
-        {**base_item, "extraction_confidence": 0.951},
-        {"matched_capability_id": None, "relation": "different", "confidence": 0.98},
+        base_item,
+        {"matched_capability_id": None, "relation": "different", "confidence": 0.90},
     )
-    assert capability_service._can_auto_create(
-        {**base_item, "extraction_confidence": 0.99},
-        {"matched_capability_id": 7, "relation": "same", "confidence": 0.94},
+    assert not capability_service._can_auto_create(
+        {**base_item, "classification_confidence": 0.89},
+        {"matched_capability_id": None, "relation": "different", "confidence": 0.95},
+    )
+    assert not capability_service._is_auto_merge(
+        {"matched_capability_id": 7, "relation": "same", "confidence": 0.95},
+        {**base_item, "classification_confidence": 0.89},
     )

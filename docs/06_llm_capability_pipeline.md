@@ -18,9 +18,15 @@
 5. 先按规范化别称精确匹配正式能力。
 6. 未命中时，以同一二级分类中的能力总称作为候选，请 LLM 判断：
    `same`、`broader`、`narrower`、`related` 或 `different`。
-7. 只有置信度不低于 0.92 的 `same` 自动成为已有能力的别称。
-8. 其他结果进入能力总称候选、二级分类候选或归并审核。
-9. 审核通过后才写入正式能力表和 `job_capability_links`。
+7. 任一关键可信度低于 0.80 时重做对应判断，最多三次。
+8. 所有关键可信度均达到 0.90 时，`same` 自动归并，非 `same` 自动创建新总称。
+9. 没有低于 0.80、但至少一项处于 0.80～0.8999 时进入人工审核。
+10. 连续三次仍低于 0.80 时，在 JD 主记录上标记能力提取失败并保存原因。
+11. 审核通过后才写入正式能力表和 `job_capability_links`。
+
+`career_units.capability_extraction_status` 保存
+`not_started / processing / review / succeeded / failed`，失败原因和时间分别写入
+`capability_extraction_failure_reason` 与 `capability_extraction_status_at`。
 
 ## 配置
 

@@ -1,30 +1,47 @@
-import type { ActiveCapability, CapabilityCandidate, CapabilityGraphDetail, CareerGraphDirectory, CareerGraphJobDetail, CareerSpectrumPayload, CategoryCandidate, DataOverviewPayload, DataTableDetail, Evidence, GovernanceSummary, GraphPayload, GraphPayloadV2, JobDetail, JobSummary, NormalizationCandidate, Page, VectorizationRun } from "./types";
+import type { ActiveCapability, CapabilityCandidate, CapabilityGraphDetail, CareerCluster, CareerClusterCandidate, CareerClusteringStatus, CareerGraphDirectory, CareerGraphJobDetail, CareerSpectrumPayload, CategoryCandidate, DataOverviewPayload, DataTableDetail, Evidence, GovernanceSummary, GraphPayload, GraphPayloadV2, JDPipelineJob, JDPipelineStatus, JDPipelineSummary, JobDetail, JobSummary, NormalizationCandidate, Page, VectorizationRun } from "./types";
 
 const API_PREFIX = "/api/v1";
 
 async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(body?.message ?? `请求失败（${response.status}）`);
+  try {
+    const response = await fetch(`${API_PREFIX}${path}`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.message ?? `请求失败（${response.status}）`);
+    }
+    return response.json() as Promise<T>;
+  } catch (error: any) {
+    if (error.name === "AbortSignal" || error.name === "AbortError") {
+      throw error;
+    }
+    if (error.message === "Failed to fetch" || error.name === "TypeError") {
+      throw new Error("无法连接后端服务，请检查后端 API 是否启动或正在处理密集高并发任务。");
+    }
+    throw error;
   }
-  return response.json() as Promise<T>;
 }
 
 async function mutate<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`, {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const result = await response.json().catch(() => null);
-    throw new Error(result?.message ?? `请求失败（${response.status}）`);
+  try {
+    const response = await fetch(`${API_PREFIX}${path}`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      throw new Error(result?.message ?? `请求失败（${response.status}）`);
+    }
+    return response.json() as Promise<T>;
+  } catch (error: any) {
+    if (error.message === "Failed to fetch" || error.name === "TypeError") {
+      throw new Error("无法连接后端服务，请稍后重试。");
+    }
+    throw error;
   }
-  return response.json() as Promise<T>;
 }
 
 export const api = {
@@ -66,6 +83,57 @@ export const api = {
     return mutate<{ id: number; status: string }>(
       `/capability-governance/normalizations/${reviewId}/review`,
       body,
+    );
+  },
+  getCareerClusteringStatus(signal?: AbortSignal) {
+    return request<CareerClusteringStatus>("/career-clustering/status", signal);
+  },
+  getCareerClusterCandidates(signal?: AbortSignal) {
+    return request<{ items: CareerClusterCandidate[] }>("/career-clustering/candidates?limit=500", signal);
+  },
+  getCareerClusters(signal?: AbortSignal) {
+    return request<{ items: CareerCluster[] }>("/career-clustering/clusters?limit=1000", signal);
+  },
+  runCareerClusteringBatch(limit = 5) {
+    return mutate<{ items: { careerUnitId: number; status: string; decision?: string; error?: string }[]; count: number }>(
+      `/career-clustering/batch?limit=${limit}`,
+      {},
+    );
+  },
+  reviewCareerClusterCandidate(candidateId: number, body: Record<string, unknown>) {
+    return mutate<{ id: number; status: string; resolvedClusterId: number | null }>(
+      `/career-clustering/candidates/${candidateId}/review`,
+      body,
+    );
+  },
+  getJDPipelineSummary(signal?: AbortSignal) {
+    return request<JDPipelineSummary>("/jd-pipeline/summary", signal);
+  },
+  getJDPipelineJobs(filters: {
+    query?: string;
+    source?: string;
+    capabilityStatus?: JDPipelineStatus | "";
+    careerStatus?: JDPipelineStatus | "";
+    page?: number;
+    pageSize?: number;
+  }, signal?: AbortSignal) {
+    const params = new URLSearchParams({
+      page: String(filters.page ?? 1),
+      pageSize: String(filters.pageSize ?? 30),
+    });
+    if (filters.query) params.set("q", filters.query);
+    if (filters.source) params.set("source", filters.source);
+    if (filters.capabilityStatus) params.set("capabilityStatus", filters.capabilityStatus);
+    if (filters.careerStatus) params.set("careerStatus", filters.careerStatus);
+    return request<{ items: JDPipelineJob[]; page: { page: number; pageSize: number; total: number } }>(
+      `/jd-pipeline/jobs?${params}`,
+      signal,
+    );
+  },
+  processJDPipeline(careerUnitIds: number[], action: "capability" | "career" | "both") {
+    return mutate<{ items: { careerUnitId: number; status: string; capability: string; career: string; capabilityError?: string; careerError?: string }[]; count: number }>(
+      "/jd-pipeline/process",
+      { careerUnitIds, action },
     );
   },
   listJobs(query = "", pageSize = 30, signal?: AbortSignal) {

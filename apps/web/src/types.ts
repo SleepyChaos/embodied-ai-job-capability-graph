@@ -253,6 +253,118 @@ export type NormalizationCandidate = {
   reasoning: string;
 };
 
+export type CareerClusteringStatus = {
+  configured: boolean;
+  model: string;
+  promptVersion: string;
+  job_count: number;
+  eligible_job_count: number;
+  clustered_job_count: number;
+  active_cluster_count: number;
+  pending_count: number;
+  completed_run_count: number;
+  confidencePolicy: {
+    minimum: number;
+    autoDecision: number;
+    maxAttempts: number;
+  };
+};
+
+export type CareerCluster = {
+  id: number;
+  name: string;
+  description: string;
+  sub_direction_id: number;
+  sub_direction_code: string;
+  sub_direction_name: string;
+  direction_code: string;
+  direction_name: string;
+  member_count: number;
+  source: "llm_auto" | "llm_review" | "manual";
+};
+
+export type CareerClusterCapabilityEvidence = {
+  id: number;
+  name: string;
+  description: string | null;
+  category_name: string;
+  direction_name: string;
+  confidence: number;
+  evidence_text: string | null;
+};
+
+export type CareerClusterCandidate = {
+  id: number;
+  career_unit_id: number;
+  job_title: string;
+  company_name: string | null;
+  jd_description: string | null;
+  proposed_name: string;
+  description: string;
+  direction_code: string;
+  direction_name: string;
+  sub_direction_code: string;
+  sub_direction_name: string;
+  profile_confidence: number;
+  classification_confidence: number;
+  suggested_cluster_id: number | null;
+  suggested_cluster_name: string | null;
+  suggested_cluster_description: string | null;
+  suggested_relation: "same" | "broader" | "narrower" | "related" | "different";
+  suggested_confidence: number;
+  reasoning: string;
+  capability_evidence: CareerClusterCapabilityEvidence[];
+};
+
+export type JDPipelineStatus = "not_started" | "processing" | "review" | "succeeded" | "failed";
+
+export type JDPipelineSummary = {
+  total: number;
+  capability_not_started: number;
+  capability_processing: number;
+  capability_review: number;
+  capability_succeeded: number;
+  capability_failed: number;
+  career_not_started: number;
+  career_processing: number;
+  career_review: number;
+  career_succeeded: number;
+  career_failed: number;
+  career_ready: number;
+  sources: { name: string; count: number }[];
+  latestImport: {
+    id: number;
+    batch_code: string;
+    source_file: string;
+    status: string;
+    total_count: number;
+    success_count: number;
+    fail_count: number;
+    completed_at: string | null;
+  } | null;
+};
+
+export type JDPipelineJob = {
+  id: number;
+  job_title: string;
+  company_name: string | null;
+  data_source: string | null;
+  source_platform: string | null;
+  capability_extraction_status: JDPipelineStatus;
+  capability_extraction_failure_reason: string | null;
+  capability_extraction_status_at: string | null;
+  career_clustering_status: JDPipelineStatus;
+  career_clustering_failure_reason: string | null;
+  career_clustering_status_at: string | null;
+  capability_count: number;
+  capability_attempt_count: number | null;
+  career_attempt_count: number | null;
+  sub_direction_code: string | null;
+  sub_direction_name: string | null;
+  cluster_id: number | null;
+  cluster_name: string | null;
+};
+
 export type GraphNodeV2 = {
   id: string;
   type: "capability" | "career";
