@@ -23,20 +23,23 @@ scripts/        迁移、回算、验证与演示库生成脚本
 docs/           架构、模块设计、接口与视觉验收材料
 ```
 
-## 数据安全说明
+## 数据入口与演示范围
 
-Git 仓库不包含完整 SQLite 数据库、3,322 条原始 JD、原始 Excel/PDF/Word、模型权重或抓取工作目录。`database/demo_v4.db` 是经过清理的演示库：保留能力本体、标准职业、聚合画像和相似关系，删除逐条 JD、证据原文、招聘版本、向量任务和人工操作记录。
+推荐使用 [`database/demo_v4.db`](database/demo_v4.db) 演示。它由 [演示库生成脚本](scripts/create_demo_database.py) 清理逐条 JD、证据原文、招聘版本、向量任务和人工操作记录，保留能力本体、标准职业、聚合画像和相似关系；清理范围见 [数据库说明](database/README.md)。
 
-完整数据库即使是 SQLite 文件，也仍可能包含公司、招聘原文和来源 URL。不要因为它是单文件数据库就直接提交到公开仓库。
+当前版本还跟踪着 `data/embodied_ai_jobs_v4.db` 运行数据库和 `assets/具身智能岗位_合并去重.xlsx`。它们与演示库不是同一份数据，不能声称本仓库只含脱敏演示数据。需要自行核对其内容、来源和适用范围；下方启动方式会新建单独的演示运行副本，不覆盖已有运行库。
+
+此项目提供双图谱与匹配 MVP；同账号的 [岗位能力图谱主项目](https://github.com/SleepyChaos/job-capability-graph) 承载另一套后续研究与开发。两仓的数据库和脚本入口不同，不能直接互换。
 
 ## 本地启动
 
-先把只读演示库复制成运行副本：
+需要 Python 3.10+、Node.js 与 pnpm。以下命令在仓库根目录使用 PowerShell；后端与前端分别使用终端，并在启动后端的同一终端设置数据库路径。复制演示库得到运行副本：
 
 ```powershell
 New-Item -ItemType Directory -Force data | Out-Null
-Copy-Item database\demo_v4.db data\embodied_ai_jobs_v4.db
-$env:EMBODIED_DB_PATH = (Resolve-Path data\embodied_ai_jobs_v4.db)
+# demo-local.db 只用于本地演示；重复执行会重置这份副本。
+Copy-Item database\demo_v4.db data\demo-local.db
+$env:EMBODIED_DB_PATH = (Resolve-Path data\demo-local.db)
 ```
 
 启动后端：
@@ -98,6 +101,8 @@ $env:EMBODIED_MODEL_DIR = (Resolve-Path models)
 模型不提交 Git。缺少模型时系统透明降级为能力向量匹配，不会伪造语义分。
 
 ## 验证
+
+后端测试与前端构建是开发检查命令，不代表已完成外部模型或全部平台的验证。
 
 ```powershell
 cd apps\api

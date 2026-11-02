@@ -12,7 +12,7 @@
 /embodied_ai_jobs_database_doc.md
 *.failed
 
-# The repository contains only the sanitized demo database.
+# Keep the sanitized demo database; tracked source/runtime data is documented in README.md.
 database/*.db
 !database/demo_v4.db
 database/*.db-*
@@ -57,3 +57,10 @@ Thumbs.db
 .preview
 .cozeproj/reduction
 .codegraph
+
+# Local writable copies of the demo database
+/data/demo-local.db
+/data/demo-local.db-*
+
+/data/demo-generated.db
+/data/demo-generated.db-*
