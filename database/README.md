@@ -20,12 +20,12 @@
 
 它保留能力本体、标准职业、聚合职业能力画像、相似关系和图谱快照，用于不接触原始采集数据的界面演示。
 
-重新生成：
+生成新的本地演示库（从仓库根目录执行；目标文件必须不存在，重复运行请换一个文件名或先保存旧副本）：
 
 ```powershell
 .\apps\api\.venv\Scripts\python.exe .\scripts\create_demo_database.py `
-  --source .\embodied_ai_jobs_v4.db `
-  --target .\database\demo_v4.db
+  --source .\data\embodied_ai_jobs_v4.db `
+  --target .\data\demo-generated.db
 ```
 
-完整数据库、迁移报告中的本机路径以及原始数据文件均由 `.gitignore` 排除。
+当前版本仍跟踪 `data/embodied_ai_jobs_v4.db` 与 `assets/具身智能岗位_合并去重.xlsx`，不属于本节演示库的清理保证。忽略规则不移除已跟踪文件。本地演示请使用根 README 的独立 `data/demo-local.db` 副本，避免覆盖运行库。
